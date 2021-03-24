@@ -1,0 +1,112 @@
+Order of group_halo_update within k_split
+
+
+fv_dynamics
+
+ call start_group_halo_update(i_pack(1), delp, domain)
+ call start_group_halo_update(i_pack(2), pt,   domain)
+ call start_group_halo_update(i_pack(8), u, v, domain, gridtype=DGRID_NE)
+
+dyn_core
+
+ call start_group_halo_update(i_pack(10), q, domain)                         !inline q
+   call start_group_halo_update(i_pack(7), w, domain)                        !non-hydro
+   call start_group_halo_update(i_pack(5), gz,  domain)                      !non-hydro, it == 1
+ call complete_group_halo_update(i_pack(1), domain)                          !it == 1
+ call complete_group_halo_update(i_pack(2), domain)                          !it == 1
+ call complete_group_halo_update(i_pack(8), domain)
+   call complete_group_halo_update(i_pack(7), domain)                        !non-hydro
+ call start_group_halo_update(i_pack(3), divgd, domain, position=CORNER)     !nord>0
+   call complete_group_halo_update(i_pack(5), domain)                        !non-hydro, it == 1
+ call start_group_halo_update(i_pack(9), uc, vc, domain, gridtype=CGRID_NE)
+ call complete_group_halo_update(i_pack(10), domain)                         !inline q
+ call complete_group_halo_update(i_pack(3), domain)                          !nord > 0
+ call complete_group_halo_update(i_pack(9), domain)
+ call start_group_halo_update(i_pack(1), delp, domain)
+ call start_group_halo_update(i_pack(2), pt,   domain)
+ call complete_group_halo_update(i_pack(1), domain)
+ call complete_group_halo_update(i_pack(2), domain)
+   call start_group_halo_update(i_pack(4), zh ,  domain)                     !non-hydro
+   call start_group_halo_update(i_pack(5), pkc,  domain)                     !non-hydro
+   call complete_group_halo_update(i_pack(4), domain)                        !non-hydro
+   call complete_group_halo_update(i_pack(5), domain)                        !non-hydro
+ call start_group_halo_update(i_pack(8), u, v, domain, gridtype=DGRID_NE)    !it/=n_split
+ call start_group_halo_update(i_pack(10), q, domain)   !it==n_split
+
+ 
+fv_tracer
+ call start_group_halo_update(i_pack(10), q, domain)
+ call complete_group_halo_update(i_pack(10), domain)
+ call start_group_halo_update(i_pack(10), q, domain)                             !it/=nsplt
+
+ipack associations
+1  - delp
+2  - pt
+3  - divgd
+4  - zh
+5  - gz  !, pkc move to 6, which is spare
+6  - pkc
+7  - w
+8  - u,v
+9  - uc,vc
+10 - q
+11 - q_con
+12 - cappa
+
+
+  type mpp_group_update_type
+     private
+     logical            :: initialized = .FALSE.
+     logical            :: k_loop_inside = .TRUE.
+     integer            :: nscalar = 0
+     integer            :: nvector = 0
+     integer            :: flags_s=0, flags_v=0
+     integer            :: whalo_s=0, ehalo_s=0, shalo_s=0, nhalo_s=0
+     integer            :: isize_s=0, jsize_s=0, ksize_s=1
+     integer            :: whalo_v=0, ehalo_v=0, shalo_v=0, nhalo_v=0
+     integer            :: isize_x=0, jsize_x=0, ksize_v=1
+     integer            :: isize_y=0, jsize_y=0
+     integer            :: position=0, gridtype=0
+     logical            :: recv_s(8), recv_v(8)
+     integer            :: is_s=0, ie_s=0, js_s=0, je_s=0
+     integer            :: is_x=0, ie_x=0, js_x=0, je_x=0
+     integer            :: is_y=0, ie_y=0, js_y=0, je_y=0
+     integer            :: nrecv=0, nsend=0
+     integer            :: npack=0, nunpack=0
+     integer            :: reset_index_s = 0
+     integer            :: reset_index_v = 0
+     integer            :: tot_msgsize = 0
+     integer            :: from_pe(MAXOVERLAP)
+     integer            :: to_pe(MAXOVERLAP)
+     integer            :: recv_size(MAXOVERLAP)
+     integer            :: send_size(MAXOVERLAP)
+     integer            :: buffer_pos_recv(MAXOVERLAP)
+     integer            :: buffer_pos_send(MAXOVERLAP)
+     integer            :: pack_type(MAXOVERLAP)
+     integer            :: pack_buffer_pos(MAXOVERLAP)
+     integer            :: pack_rotation(MAXOVERLAP)
+     integer            :: pack_size(MAXOVERLAP)
+     integer            :: pack_is(MAXOVERLAP)
+     integer            :: pack_ie(MAXOVERLAP)
+     integer            :: pack_js(MAXOVERLAP)
+     integer            :: pack_je(MAXOVERLAP)
+     integer            :: unpack_type(MAXOVERLAP)
+     integer            :: unpack_buffer_pos(MAXOVERLAP)
+     integer            :: unpack_rotation(MAXOVERLAP)
+     integer            :: unpack_size(MAXOVERLAP)
+     integer            :: unpack_is(MAXOVERLAP)
+     integer            :: unpack_ie(MAXOVERLAP)
+     integer            :: unpack_js(MAXOVERLAP)
+     integer            :: unpack_je(MAXOVERLAP)
+     integer(LONG_KIND) :: addrs_s(MAX_DOMAIN_FIELDS)
+     integer(LONG_KIND) :: addrs_x(MAX_DOMAIN_FIELDS)
+     integer(LONG_KIND) :: addrs_y(MAX_DOMAIN_FIELDS)
+     integer            :: buffer_start_pos = -1
+     integer            :: request_send(MAX_REQUEST)
+     integer            :: request_recv(MAX_REQUEST)
+     integer            :: type_recv(MAX_REQUEST)
+  end type mpp_group_update_type
+
+
+
+if 

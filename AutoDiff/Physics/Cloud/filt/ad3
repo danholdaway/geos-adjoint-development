@@ -1,0 +1,11 @@
+
+!Adjoint of saving pre-LS_CLOUD perturbation trajectory
+tb(i,j,k)      = tb(i,j,k)      +  t_p_prelsc
+qb(i,j,k)      = qb(i,j,k)      +  q_p_prelsc
+qi_lsb(i,j,k)  = qi_lsb(i,j,k)  +  qi_ls_p_prelsc
+qi_conb(i,j,k) = qi_conb(i,j,k) +  qi_con_p_prelsc
+ql_lsb(i,j,k)  = ql_lsb(i,j,k)  +  ql_ls_p_prelsc
+ql_conb(i,j,k) = ql_conb(i,j,k) +  ql_con_p_prelsc
+cf_lsb(i,j,k)  = cf_lsb(i,j,k)  +  cf_ls_p_prelsc
+cf_conb(i,j,k) = cf_conb(i,j,k) +  cf_con_p_prelsc
+

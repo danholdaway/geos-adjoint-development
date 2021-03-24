@@ -1,0 +1,238 @@
+close all
+clear
+clc
+
+load coast
+coast_lat = lat; clear lat
+coast_lon = long; clear long
+
+cd /discover/nobackup/drholdaw/ExperimentData/Journal_Articles/moist_dev_mwr/
+
+lon = ncread('fvpert.eta.dry.20120317_06z.nc4','lon');
+lat = ncread('fvpert.eta.dry.20120317_06z.nc4','lat');
+
+U_dry  = ncread('fvpert.eta.dry.20120317_06z.nc4','u');
+V_dry  = ncread('fvpert.eta.dry.20120317_06z.nc4','v');
+TV_dry = ncread('fvpert.eta.dry.20120317_06z.nc4','tv');
+DP_dry = ncread('fvpert.eta.dry.20120317_06z.nc4','delp');
+QV_dry = ncread('fvpert.eta.dry.20120317_06z.nc4','sphu');
+QL_dry = ncread('fvpert.eta.dry.20120317_06z.nc4','qltot');
+QI_dry = ncread('fvpert.eta.dry.20120317_06z.nc4','qitot');
+O3_dry = ncread('fvpert.eta.dry.20120317_06z.nc4','ozone');
+
+U_moi  = ncread('fvpert.eta.moi.20120317_06z.nc4','u');
+V_moi  = ncread('fvpert.eta.moi.20120317_06z.nc4','v');
+TV_moi = ncread('fvpert.eta.moi.20120317_06z.nc4','tv');
+DP_moi = ncread('fvpert.eta.moi.20120317_06z.nc4','delp');
+QV_moi = ncread('fvpert.eta.moi.20120317_06z.nc4','sphu');
+QL_moi = ncread('fvpert.eta.moi.20120317_06z.nc4','qltot');
+QI_moi = ncread('fvpert.eta.moi.20120317_06z.nc4','qitot');
+O3_moi = ncread('fvpert.eta.moi.20120317_06z.nc4','ozone');
+
+U_nlm_free  = ncread('iau590.prog.eta.free.20120317_06z.nc4','u');
+V_nlm_free  = ncread('iau590.prog.eta.free.20120317_06z.nc4','v');   
+TV_nlm_free = ncread('iau590.prog.eta.free.20120317_06z.nc4','tv');
+DP_nlm_free = ncread('iau590.prog.eta.free.20120317_06z.nc4','delp');
+QV_nlm_free = ncread('iau590.prog.eta.free.20120317_06z.nc4','sphu');
+QL_nlm_free = ncread('iau590.prog.eta.free.20120317_06z.nc4','qltot');
+QI_nlm_free = ncread('iau590.prog.eta.free.20120317_06z.nc4','qitot');
+O3_nlm_free = ncread('iau590.prog.eta.free.20120317_06z.nc4','ozone');
+
+U_nlm_del_0_2  = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','u');
+V_nlm_del_0_2  = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','v');   
+TV_nlm_del_0_2 = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','tv');
+DP_nlm_del_0_2 = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','delp');
+QV_nlm_del_0_2 = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','sphu');
+QL_nlm_del_0_2 = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','qltot');
+QI_nlm_del_0_2 = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','qitot');
+O3_nlm_del_0_2 = ncread('iau590.prog.eta.del1p0.20120317_06z.nc4','ozone');
+
+U_nlm = U_nlm_del_0_2 - U_nlm_free;
+V_nlm = V_nlm_del_0_2 - V_nlm_free;
+TV_nlm = TV_nlm_del_0_2 - TV_nlm_free;
+DP_nlm = DP_nlm_del_0_2 - DP_nlm_free;
+QV_nlm = QV_nlm_del_0_2 - QV_nlm_free;
+QL_nlm = QL_nlm_del_0_2 - QL_nlm_free;
+QI_nlm = QI_nlm_del_0_2 - QI_nlm_free;
+O3_nlm = O3_nlm_del_0_2 - O3_nlm_free;
+
+cd /home/drholdaw/Lin_Moist_Physics/Moist_Dev_MWR/
+
+%Make center of colormap white
+cmap = colormap;
+cmap(32,:) = [1 1 1];
+cmap(33,:) = [1 1 1];
+close
+
+fontsize = 11;
+
+line_wid_cont = 1.0;
+line_wid_det = 0.6;
+
+grey = 0.75;
+
+plotlevel = 50;
+
+
+plot_fields = 0;
+plot_diffrs = 1;
+
+
+
+   
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%    PLOT THE DIFFERENCES    %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+if plot_diffrs == 1
+    
+    dry_tlm_TV_diff = TV_nlm(:,:,plotlevel)'-TV_dry(:,:,plotlevel)';
+    moi_tlm_TV_diff = TV_nlm(:,:,plotlevel)'-TV_moi(:,:,plotlevel)';
+    dry_tlm_QV_diff = QV_nlm(:,:,plotlevel)'-QV_dry(:,:,plotlevel)';
+    moi_tlm_QV_diff = QV_nlm(:,:,plotlevel)'-QV_moi(:,:,plotlevel)';
+    
+ 
+    
+    TVdiffmax = max(max([TV_nlm(:,:,plotlevel)'; dry_tlm_TV_diff; moi_tlm_TV_diff]));
+    TVdiffmin = min(min([TV_nlm(:,:,plotlevel)'; dry_tlm_TV_diff; moi_tlm_TV_diff]));
+    QVdiffmax = max(max([QV_nlm(:,:,plotlevel)'; dry_tlm_QV_diff; moi_tlm_QV_diff]));
+    QVdiffmin = min(min([QV_nlm(:,:,plotlevel)'; dry_tlm_QV_diff; moi_tlm_QV_diff]));
+
+    TVdiffabsmax = max(abs([TVdiffmax TVdiffmin]));
+    QVdiffabsmax = max(abs([QVdiffmax QVdiffmin]));
+    
+    cint_tv = 2*TVdiffabsmax/10;
+    cint_qv = 2*QVdiffabsmax/30;
+    
+    figure('Position',[ 164 70 1058 849])
+    
+    subplot(3,2,1)
+    [C,h] = contour(lon,lat,TV_nlm(:,:,plotlevel)','LineWidth',line_wid_cont);
+    caxis([-TVdiffabsmax TVdiffabsmax])
+    
+    colormap(cmap)
+    pos2 = get(gca,'Position');
+    colbar = colorbar;
+    set(gca,'Position',[pos2(1)-0.05 pos2(2) pos2(3) pos2(4)])
+    title('(a) T_v Nonlinear Perturbation Trajectory','FontSize',fontsize,'FontName','TimesNewRoman')
+    title(colbar,'(K)','FontSize',fontsize,'FontName','TimesNewRoman')
+    hold on; 
+    plot(coast_lon,coast_lat,'Color',[grey grey grey])
+    axis equal; box on; xlim([-180 180]); ylim([-90 90])
+    set(gca,'XTick',[-180 -120 -60 0 60 120 180],'Ytick',[-90 -60 -30 0 30 60 90]);
+    set(gca,'XTickLabel',{'180W', '120W', '60W', '0', '60E', '120E', '180E'}...
+       ,'YtickLabel',{'90S' '60S' '30S' '0' '30N' '60N' '90N'});
+    set(gca,'FontSize',fontsize,'FontName','TimesNewRoman')
+
+    set(h,'LevelStep',cint_tv);
+    
+ asd
+    subplot(3,2,2)
+    [C,h] = contour(lon,lat,QV_nlm(:,:,plotlevel)','LineWidth',line_wid_cont);
+    caxis([-QVdiffabsmax QVdiffabsmax])
+    
+    colormap(cmap)
+    pos3 = get(gca,'Position');
+    colbar = colorbar;
+    set(gca,'Position',[pos3(1) pos3(2) pos3(3) pos3(4)])
+    title('(b) q Nonlinear Perturbation Trajectory','FontSize',fontsize,'FontName','TimesNewRoman')
+    title(colbar,'(kgkg^{-1})','FontSize',fontsize,'FontName','TimesNewRoman')
+    hold on; 
+    plot(coast_lon,coast_lat,'Color',[grey grey grey])
+    axis equal; box on; xlim([-180 180]); ylim([-90 90])
+    set(gca,'XTick',[-180 -120 -60 0 60 120 180],'Ytick',[-90 -60 -30 0 30 60 90]);
+    set(gca,'XTickLabel',{'180W', '120W', '60W', '0', '60E', '120E', '180E'}...
+       ,'YtickLabel',{'90S' '60S' '30S' '0' '30N' '60N' '90N'});
+    set(gca,'FontSize',fontsize,'FontName','TimesNewRoman')
+
+    set(h,'LevelStep',cint_qv);
+   
+    
+    subplot(3,2,3)
+    [C,h] = contour(lon,lat,dry_tlm_TV_diff,'LineWidth',line_wid_cont);
+    caxis([-TVdiffabsmax TVdiffabsmax])
+    
+
+    colormap(cmap)
+    pos1 = get(gca,'Position');
+    colbar = colorbar;
+    set(gca,'Position',[pos1(1)-0.05 pos1(2) pos1(3) pos1(4)])
+    title('(c) T_v Difference (Dry Physics)','FontSize',fontsize,'FontName','TimesNewRoman')
+    title(colbar,'(K)','FontSize',fontsize,'FontName','TimesNewRoman')
+    hold on; 
+    plot(coast_lon,coast_lat,'Color',[grey grey grey])
+    axis equal; box on; xlim([-180 180]); ylim([-90 90])
+    set(gca,'XTick',[-180 -120 -60 0 60 120 180],'Ytick',[-90 -60 -30 0 30 60 90]);
+    set(gca,'XTickLabel',{'180W', '120W', '60W', '0', '60E', '120E', '180E'}...
+       ,'YtickLabel',{'90S' '60S' '30S' '0' '30N' '60N' '90N'});
+    set(gca,'FontSize',fontsize,'FontName','TimesNewRoman')
+
+    set(h,'LevelStep',cint_tv);
+    
+    subplot(3,2,5)
+    [C,h] = contour(lon,lat,moi_tlm_TV_diff,'LineWidth',line_wid_cont);
+    caxis([-TVdiffabsmax TVdiffabsmax])
+    
+    colormap(cmap)
+    pos2 = get(gca,'Position');
+    colbar = colorbar;
+    set(gca,'Position',[pos2(1)-0.05 pos2(2) pos2(3) pos2(4)])
+    title('(e) T_v Difference (Moist Physics)','FontSize',fontsize,'FontName','TimesNewRoman')
+    title(colbar,'(K)','FontSize',fontsize,'FontName','TimesNewRoman')
+    hold on; 
+    plot(coast_lon,coast_lat,'Color',[grey grey grey])
+    axis equal; box on; xlim([-180 180]); ylim([-90 90])
+    set(gca,'XTick',[-180 -120 -60 0 60 120 180],'Ytick',[-90 -60 -30 0 30 60 90]);
+    set(gca,'XTickLabel',{'180W', '120W', '60W', '0', '60E', '120E', '180E'}...
+       ,'YtickLabel',{'90S' '60S' '30S' '0' '30N' '60N' '90N'});
+    set(gca,'FontSize',fontsize,'FontName','TimesNewRoman')
+
+    set(h,'LevelStep',cint_tv);
+    
+ 
+    subplot(3,2,4)
+    [C,h] = contour(lon,lat,dry_tlm_QV_diff,'LineWidth',line_wid_cont);
+    caxis([-QVdiffabsmax QVdiffabsmax])
+    
+    colormap(cmap)
+    pos3 = get(gca,'Position');
+    colbar = colorbar;
+    set(gca,'Position',[pos3(1) pos3(2) pos3(3) pos3(4)])
+    title('(d) q Difference (Dry Physics)','FontSize',fontsize,'FontName','TimesNewRoman')
+    title(colbar,'(kgkg^{-1})','FontSize',fontsize,'FontName','TimesNewRoman')
+    hold on; 
+    plot(coast_lon,coast_lat,'Color',[grey grey grey])
+    axis equal; box on; xlim([-180 180]); ylim([-90 90])
+    set(gca,'XTick',[-180 -120 -60 0 60 120 180],'Ytick',[-90 -60 -30 0 30 60 90]);
+    set(gca,'XTickLabel',{'180W', '120W', '60W', '0', '60E', '120E', '180E'}...
+       ,'YtickLabel',{'90S' '60S' '30S' '0' '30N' '60N' '90N'});
+    set(gca,'FontSize',fontsize,'FontName','TimesNewRoman')
+
+    set(h,'LevelStep',cint_qv);
+
+    subplot(3,2,6)
+    [C,h] = contour(lon,lat,moi_tlm_QV_diff,'LineWidth',line_wid_cont);
+    caxis([-QVdiffabsmax QVdiffabsmax])
+    
+    colormap(cmap)
+    pos4 = get(gca,'Position');
+    colbar = colorbar;
+    set(gca,'Position',[pos4(1) pos4(2) pos4(3) pos4(4)])
+    title('(f) q Difference (Moist Physics)','FontSize',fontsize,'FontName','TimesNewRoman')
+    title(colbar,'(kgkg^{-1})','FontSize',fontsize,'FontName','TimesNewRoman')
+    hold on; 
+    plot(coast_lon,coast_lat,'Color',[grey grey grey])
+    axis equal; box on; xlim([-180 180]); ylim([-90 90])
+    set(gca,'XTick',[-180 -120 -60 0 60 120 180],'Ytick',[-90 -60 -30 0 30 60 90]);
+    set(gca,'XTickLabel',{'180W', '120W', '60W', '0', '60E', '120E', '180E'}...
+       ,'YtickLabel',{'90S' '60S' '30S' '0' '30N' '60N' '90N'});
+    set(gca,'FontSize',fontsize,'FontName','TimesNewRoman')
+
+    set(h,'LevelStep',cint_qv);
+    
+
+
+end
+
+saveas(gcf,'tlm_vs_nlm_6h.eps', 'psc2')
+

@@ -1,0 +1,4 @@
+
+
+integer :: esmf_maxstr
+real :: MAPL_UNDEF

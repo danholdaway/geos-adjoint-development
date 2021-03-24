@@ -1,0 +1,56 @@
+!Inputs and Outputs
+IM      	- 
+IX     		- 
+KM		- Number of vertical levels
+DT      	- Moist time step
+SL      	- 
+PS      	- Surface pressure, (cb)
+T_in    	- Trajectory Temperature Output, Temp or PotTemp?
+Q_in    	- Trajectory Moisture Output
+CWM_in  	- 
+RHC     	- 
+advT		-
+advQ		-
+advP		-
+T_out		- Trajectory Temperature Output, T or PT?
+Q_out		- Trajectory Moisture Output
+CWM_out		-
+dadvT		-
+dadvQ		-
+dadvP		-
+dT_in		- Perturbation Temperature Input
+dQ_in		- Perturbation Moisture Input
+dCWM_in		-
+dT_out		- Perturbation Temperature Output
+dQ_out		- Perturbation Moisture Output
+dCWM_out	-
+
+!Kinds
+r_single	-
+r_kind		-
+i_kind		-
+
+!Constants
+HVAP		-
+HFUS		-
+CP		-
+RD		-
+EPS		-
+EPSM1		-
+EPSQ		-
+CPR		-
+RCP		-
+ZERO		-
+HALF		-
+ONE		-
+TWO		-
+EL2ORC		-
+CLIMIT		-
+CCLIMIT		-
+HSUB		-
+TTP		-
+tiny_r_kind	-
+huge_r_kind	-
+elocp		-
+
+

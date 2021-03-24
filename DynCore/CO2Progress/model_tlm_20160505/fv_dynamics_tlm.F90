@@ -1,0 +1,807 @@
+module fv_dynamics_tlm_mod
+
+   use fv_arrays_mod,      only: p_precision
+!#ifndef MAPL_MODE
+!   use constants_mod,   only: grav, pi, radius, hlv, rdgas, kappa
+!#endif
+!   use dyn_core_mod,    only: dyn_core
+!   use fv_mapz_mod,     only: compute_total_energy, Lagrangian_to_Eulerian
+!   use fv_tracer2d_mod, only: tracer_2d, tracer_2d_1L
+   use dyn_core_tlm_mod,    only: dyn_core_tlm
+!   use fv_mapz_tlm_mod,     only: compute_total_energy_tlm, Lagrangian_to_Eulerian_tlm
+   use fv_mapz_tlm_mod,     only:  Lagrangian_to_Eulerian_tlm
+   use dyn_core_adm_mod,    only: dyn_core
+   use fv_mapz_adm_mod,     only: compute_total_energy
+   use fv_tracer2d_adm_mod, only: tracer_2d, tracer_2d_1L
+   use fv_tracer2d_tlm_mod, only: tracer_2d_tlm, tracer_2d_1L_tlm
+   use fv_control_mod,  only: hord_mt, hord_vt, hord_tm, hord_tr, hord_tr_pert, &
+                              kord_mt, kord_tm, kord_tr, moist_phys, &
+                              kord_mt_pert, kord_tm_pert, kord_tr_pert, &
+                              range_warn, inline_q, z_tracer, tau, rf_center, nf_omega,   &
+                              te_method, remap_t,  k_top, p_ref, nwat, fv_debug, k_split, &
+                              check_surface_pressure, shallow_water
+
+   use fv_grid_utils_mod, only: g_sum
+   use fv_grid_utils_mod, only: sina_u, sina_v, sw_corner, se_corner, &
+                                ne_corner, nw_corner, da_min, ptop, c2l_ord2
+   use fv_grid_utils_tlm_mod, only: c2l_ord2_tlm
+   use fv_grid_utils_mod, only: cubed_to_latlon
+   use fv_grid_tools_mod, only: dx, dy, rdxa, rdya, rdxc, rdyc, area, rarea
+   use fv_mp_mod,         only: is,js,ie,je, isd,jsd,ied,jed, gid, domain
+   use fv_timing_mod,     only: timing_on, timing_off
+
+   use diag_manager_mod,   only: send_data
+   use fv_diagnostics_mod, only: id_divg, id_te, fv_time, prt_maxmin, range_check
+   use mpp_domains_mod,    only: DGRID_NE, mpp_update_domains
+   use field_manager_mod,  only: MODEL_ATMOS
+   use tracer_manager_mod, only: get_tracer_index
+   use fv_sg_mod,          only: neg_adj3
+   use tp_core_mod,        only: copy_corners
+   use fv_grid_tools_mod,  only: agrid
+
+
+
+!#ifdef WAVE_MAKER
+!   use time_manager_mod,  only: get_time
+!#endif
+
+
+implicit none
+   logical :: RF_initialized = .false.
+   logical :: bad_range
+   real, allocatable ::  rf(:), rw(:)
+   real, allocatable ::  rf_tl(:), rw_tl(:)
+   integer:: kmax=1
+private
+public :: fv_dynamics_tlm
+
+contains
+
+  SUBROUTINE FV_DYNAMICS_TLM(npx, npy, npz, nq, ng, bdt, consv_te, fill&
+&   , reproduce_sum, kappa, cp_air, zvir, ks, ncnst, n_split, q_split, u&
+&   , u_tl, v, v_tl, um, um_tl, vm, vm_tl, w, w_tl, delz, delz_tl, &
+&   hydrostatic, pt, pt_tl, delp, delp_tl, q, q_tl, ps, pe, pe_tl, pk, &
+&   pk_tl, peln, peln_tl, pkz, pkz_tl, phis, omga, omga_tl, ua, ua_tl, &
+&   va, va_tl, uc, uc_tl, vc, vc_tl, ak, bk, mfx, mfx_tl, mfy, mfy_tl, &
+&   cx, cx_tl, cy, cy_tl, ze0, hybrid_z, rdgas, grav, pi, radius, hlv, &
+&   time_total, elapsed_time, advection_test_case3)
+    IMPLICIT NONE
+! Large time-step
+    REAL, INTENT(IN) :: bdt
+    REAL, INTENT(IN) :: consv_te
+    REAL, INTENT(IN) :: kappa, cp_air
+    REAL, INTENT(IN) :: zvir
+    REAL, INTENT(IN), OPTIONAL :: time_total
+    REAL, INTENT(IN), OPTIONAL :: elapsed_time
+    LOGICAL, INTENT(IN), OPTIONAL :: advection_test_case3
+    INTEGER, INTENT(IN) :: npx
+    INTEGER, INTENT(IN) :: npy
+    INTEGER, INTENT(IN) :: npz
+! transported tracers
+    INTEGER, INTENT(IN) :: nq
+    INTEGER, INTENT(IN) :: ng
+    INTEGER, INTENT(IN) :: ks
+    INTEGER, INTENT(IN) :: ncnst
+! small-step horizontal dynamics
+    INTEGER, INTENT(IN) :: n_split
+! tracer
+    INTEGER, INTENT(IN) :: q_split
+    LOGICAL, INTENT(IN) :: fill
+    LOGICAL, INTENT(IN) :: reproduce_sum
+    LOGICAL, INTENT(IN) :: hydrostatic
+! Using hybrid_z for remapping
+    LOGICAL, INTENT(IN) :: hybrid_z
+! D grid zonal wind (m/s)
+    REAL, DIMENSION(isd:ied, jsd:jed + 1, npz), INTENT(INOUT) :: u, um
+    REAL, DIMENSION(isd:ied, jsd:jed+1, npz), INTENT(INOUT) :: u_tl, &
+&   um_tl
+! D grid meridional wind (m/s)
+    REAL, DIMENSION(isd:ied + 1, jsd:jed, npz), INTENT(INOUT) :: v, vm
+    REAL, DIMENSION(isd:ied+1, jsd:jed, npz), INTENT(INOUT) :: v_tl, &
+&   vm_tl
+!#ifdef MAPL_MODE        
+    REAL, INTENT(IN) :: rdgas, grav, pi, radius, hlv
+!#endif
+!  W (m/s)
+    REAL, INTENT(INOUT) :: w(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: w_tl(isd:ied, jsd:jed, npz)
+! temperature (K)
+    REAL, INTENT(INOUT) :: pt(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: pt_tl(isd:ied, jsd:jed, npz)
+! pressure thickness (pascal)
+    REAL, INTENT(INOUT) :: delp(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: delp_tl(isd:ied, jsd:jed, npz)
+! specific humidity and constituents
+    REAL, INTENT(INOUT) :: q(isd:ied, jsd:jed, npz, ncnst)
+    REAL, INTENT(INOUT) :: q_tl(isd:ied, jsd:jed, npz, ncnst)
+! delta-height (m); non-hydrostatic only
+    REAL, INTENT(INOUT) :: delz(is:ie, js:je, npz)
+    REAL, INTENT(INOUT) :: delz_tl(is:ie, js:je, npz)
+! height at edges (m); non-hydrostatic
+    REAL, INTENT(INOUT) :: ze0(is:ie, js:je, npz+1)
+!-----------------------------------------------------------------------
+! Auxilliary pressure arrays:    
+! The 5 vars below can be re-computed from delp and ptop.
+!-----------------------------------------------------------------------
+! dyn_aux:
+! Surface pressure (pascal)
+    REAL(p_precision), INTENT(INOUT) :: ps(isd:ied, jsd:jed)
+! edge pressure (pascal)
+    REAL(p_precision), INTENT(INOUT) :: pe(is-1:ie+1, npz+1, js-1:je+1)
+    REAL(p_precision), INTENT(INOUT) :: pe_tl(is-1:ie+1, npz+1, js-1:je+&
+&   1)
+! pe**cappa
+    REAL(p_precision), INTENT(INOUT) :: pk(is:ie, js:je, npz+1)
+    REAL(p_precision), INTENT(INOUT) :: pk_tl(is:ie, js:je, npz+1)
+! ln(pe)
+    REAL(p_precision), INTENT(INOUT) :: peln(is:ie, npz+1, js:je)
+    REAL(p_precision), INTENT(INOUT) :: peln_tl(is:ie, npz+1, js:je)
+! finite-volume mean pk
+    REAL(p_precision), INTENT(INOUT) :: pkz(is:ie, js:je, npz)
+    REAL(p_precision), INTENT(INOUT) :: pkz_tl(is:ie, js:je, npz)
+!-----------------------------------------------------------------------
+! Others:
+!-----------------------------------------------------------------------
+! Surface geopotential (g*Z_surf)
+    REAL, INTENT(INOUT) :: phis(isd:ied, jsd:jed)
+! Vertical pressure velocity (pa/s)
+    REAL, INTENT(INOUT) :: omga(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: omga_tl(isd:ied, jsd:jed, npz)
+! (uc,vc) mostly used as the C grid winds
+    REAL, INTENT(INOUT) :: uc(isd:ied+1, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: uc_tl(isd:ied+1, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: vc(isd:ied, jsd:jed+1, npz)
+    REAL, INTENT(INOUT) :: vc_tl(isd:ied, jsd:jed+1, npz)
+    REAL, DIMENSION(isd:ied, jsd:jed, npz), INTENT(INOUT) :: ua, va
+    REAL, DIMENSION(isd:ied, jsd:jed, npz), INTENT(INOUT) :: ua_tl, &
+&   va_tl
+    REAL, DIMENSION(npz + 1), INTENT(IN) :: ak, bk
+! Accumulated Mass flux arrays: the "Flux Capacitor"
+    REAL, INTENT(INOUT) :: mfx(is:ie+1, js:je, npz)
+    REAL, INTENT(INOUT) :: mfx_tl(is:ie+1, js:je, npz)
+    REAL, INTENT(INOUT) :: mfy(is:ie, js:je+1, npz)
+    REAL, INTENT(INOUT) :: mfy_tl(is:ie, js:je+1, npz)
+! Accumulated Courant number arrays
+    REAL, INTENT(INOUT) :: cx(is:ie+1, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: cx_tl(is:ie+1, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: cy(isd:ied, js:je+1, npz)
+    REAL, INTENT(INOUT) :: cy_tl(isd:ied, js:je+1, npz)
+! Local Arrays
+    REAL :: q2(isd:ied, jsd:jed, nq)
+    REAL :: q2_tl(isd:ied, jsd:jed, nq)
+    REAL :: te_2d(is:ie, js:je)
+    REAL :: teq(is:ie, js:je)
+    REAL :: pfull(npz)
+    REAL :: gz(is:ie)
+    REAL :: dp1(is:ie, js:je, npz)
+    REAL :: dp1_tl(is:ie, js:je, npz)
+    REAL :: pem(is-1:ie+1, npz+1, js-1:je+1)
+    REAL :: akap, rg, ph1, ph2, mdt
+    INTEGER :: i, j, k, iq, n_map
+! GFDL physics
+    INTEGER :: sphum, liq_wat, ice_wat
+    INTEGER :: rainwat, snowwat, graupel, cld_amt
+    LOGICAL :: used, last_step
+    REAL :: ps_sum
+    INTRINSIC LOG
+    INTRINSIC REAL
+!Compute the FV variables internally, for checkpointing purposes
+    CALL PERTSTATE2FVSTATE_TLM(delp, delp_tl, pe, pe_tl, pk, pk_tl, pkz&
+&                        , pkz_tl, peln, peln_tl, ptop, pt, pt_tl, isd, &
+&                        ied, jsd, jed, is, ie, js, je, npz, kappa)
+    sphum = 1
+    akap = kappa
+    rg = kappa*cp_air
+    DO k=1,npz
+      ph1 = ak(k) + bk(k)*p_ref
+      ph2 = ak(k+1) + bk(k+1)*p_ref
+      pfull(k) = (ph2-ph1)/LOG(ph2/ph1)
+    END DO
+! Compute Total Energy
+    IF (consv_te .GT. 0.) CALL COMPUTE_TOTAL_ENERGY(is, ie, js, je, isd&
+&                                             , ied, jsd, jed, npz, u, v&
+&                                             , w, delz, pt, delp, q, pe&
+&                                             , peln, phis, grav, zvir, &
+&                                             cp_air, rg, hlv, te_2d, ua&
+&                                             , teq, moist_phys, sphum, &
+&                                             hydrostatic, id_te)
+    IF (tau .GT. 0.) THEN
+!      CALL RAYLEIGH_FRICTION_TLM(bdt, npx, npy, npz, ks, pfull, tau, &
+!&                          rf_center, u, u_tl, v, v_tl, w, w_tl, pt, &
+!&                          pt_tl, ua, ua_tl, va, va_tl, delz, delz_tl, &
+!&                          cp_air, rg, hydrostatic, .true.)
+        CALL RAYLEIGH_FRICTION(bdt, npx, npy, npz, ks, pfull, tau, &
+&                        rf_center, u, v, w, pt, ua, va, delz, cp_air, &
+&                        rg, hydrostatic, .true.)
+
+    ELSE
+      ua_tl = 0.0_8
+      va_tl = 0.0_8
+    END IF
+! Convert pt to virtual potential temperature * CP
+    DO k=1,npz
+      DO j=js,je
+        DO i=is,ie
+          pt_tl(i, j, k) = (cp_air*pt_tl(i, j, k)*pkz(i, j, k)-cp_air*pt&
+&           (i, j, k)*pkz_tl(i, j, k))*(1.+zvir*q(i, j, k, sphum))/pkz(i&
+&           , j, k)**2 + cp_air*pt(i, j, k)*zvir*q_tl(i, j, k, sphum)/&
+&           pkz(i, j, k)
+          pt(i, j, k) = cp_air*pt(i, j, k)/pkz(i, j, k)*(1.+zvir*q(i, j&
+&           , k, sphum))
+        END DO
+      END DO
+    END DO
+    mdt = bdt/REAL(k_split)
+    n_map = 1
+    last_step = .true.
+    dp1_tl = 0.0_8
+    DO k=1,npz
+      DO j=js,je
+        DO i=is,ie
+          dp1_tl(i, j, k) = delp_tl(i, j, k)
+          dp1(i, j, k) = delp(i, j, k)
+        END DO
+      END DO
+    END DO
+!    CALL DYN_CORE_TLM(npx, npy, npz, ng, sphum, nq, mdt, n_split, zvir, &
+!&               cp_air, akap, rdgas, grav, hydrostatic, u, u_tl, v, v_tl&
+!&               , um, um_tl, vm, vm_tl, w, w_tl, delz, pt, pt_tl, q, &
+!&               q_tl, delp, delp_tl, pe, pe_tl, pk, pk_tl, phis, omga, &
+!&               omga_tl, ptop, pfull, ua, ua_tl, va, va_tl, uc, uc_tl, &
+!&               vc, vc_tl, mfx, mfx_tl, mfy, mfy_tl, cx, cx_tl, cy, &
+!&               cy_tl, pem, pkz, pkz_tl, peln, peln_tl, ak, bk)
+    CALL DYN_CORE(npx, npy, npz, ng, sphum, nq, mdt, n_split, zvir, &
+&           cp_air, akap, rdgas, grav, hydrostatic, u, v, um, vm, w, &
+&           delz, pt, q, delp, pe, pk, phis, omga, ptop, pfull, ua, va, &
+&           uc, vc, mfx, mfy, cx, cy, pem, pkz, peln, ak, bk)
+
+    IF (.NOT.inline_q) THEN
+      IF (nq .NE. 0) THEN
+        IF (z_tracer) THEN
+          q2_tl = 0.0_8
+          DO k=1,npz
+            DO iq=1,nq
+              DO j=js,je
+! To_do list:
+                DO i=is,ie
+! The data copying can be avoided if q is
+                  q2_tl(i, j, iq) = q_tl(i, j, k, iq)
+                  q2(i, j, iq) = q(i, j, k, iq)
+                END DO
+              END DO
+            END DO
+! re-dimensioned as q(i,j,nq,k)
+            CALL TRACER_2D_1L_TLM(q2, q2_tl, dp1(is, js, k), dp1_tl(is, &
+&                           js, k), mfx(is, js, k), mfx_tl(is, js, k), &
+&                           mfy(is, js, k), mfy_tl(is, js, k), cx(is, &
+&                           jsd, k), cx_tl(is, jsd, k), cy(isd, js, k), &
+&                           cy_tl(isd, js, k), npx, npy, npz, nq, &
+&                           hord_tr_pert, q_split, k, q, q_tl, mdt, id_divg)
+          END DO
+        ELSE
+          CALL TRACER_2D_TLM(q, q_tl, dp1, dp1_tl, mfx, mfx_tl, mfy, &
+&                      mfy_tl, cx, cx_tl, cy, cy_tl, npx, npy, npz, nq, &
+&                      hord_tr_pert, q_split, mdt, id_divg)
+        END IF
+      END IF
+    END IF
+    IF (npz .GT. 4) CALL LAGRANGIAN_TO_EULERIAN_TLM(last_step, consv_te&
+&                                             , pe, pe_tl, delp, delp_tl&
+&                                             , pkz, pkz_tl, pk, pk_tl, &
+&                                             bdt, npz, is, ie, js, je, &
+&                                             isd, ied, jsd, jed, nq, &
+&                                             sphum, u, v, pt, q, q_tl, &
+&                                             phis, zvir, cp_air, akap, &
+&                                             pi, radius, grav, kord_mt&
+&                                             , kord_tr, kord_tm, peln, &
+&                                             peln_tl, te_2d, ng, ua, &
+&                                             dp1, pem, fill, &
+&                                             reproduce_sum, ak, bk, ks&
+&                                             , te_method, remap_t, &
+&                                             ncnst)
+    IF (.NOT.shallow_water) THEN
+      DO k=1,npz
+        DO j=js,je
+          DO i=is,ie
+            pt_tl(i, j, k) = ((pt_tl(i, j, k)*pkz(i, j, k)+pt(i, j, k)*&
+&             pkz_tl(i, j, k))*cp_air*(1.+zvir*q(i, j, k, sphum))-pt(i, &
+&             j, k)*pkz(i, j, k)*cp_air*zvir*q_tl(i, j, k, sphum))/(&
+&             cp_air*(1.+zvir*q(i, j, k, sphum)))**2
+            pt(i, j, k) = pt(i, j, k)*pkz(i, j, k)/(cp_air*(1.+zvir*q(i&
+&             , j, k, sphum)))
+          END DO
+        END DO
+      END DO
+    END IF
+!Convert back to potential temperature
+    CALL FVSTATE2PERTSTATE_TLM(pkz, pkz_tl, pt, pt_tl, isd, ied, jsd, &
+&                        jed, is, ie, js, je, npz)
+  END SUBROUTINE FV_DYNAMICS_TLM
+  SUBROUTINE RAYLEIGH_FRICTION_TLM(dt, npx, npy, npz, ks, pm, tau, p_c, &
+&   u, u_tl, v, v_tl, w, w_tl, pt, pt_tl, ua, ua_tl, va, va_tl, delz, &
+&   delz_tl, cp, rg, hydrostatic, conserve)
+    IMPLICIT NONE
+!     deallocate ( u2f )
+    REAL, INTENT(IN) :: dt
+! time scale (days)
+    REAL, INTENT(IN) :: tau
+    REAL, INTENT(IN) :: p_c
+    REAL, INTENT(IN) :: cp, rg
+    INTEGER, INTENT(IN) :: npx, npy, npz, ks
+    REAL, DIMENSION(npz), INTENT(IN) :: pm
+    LOGICAL, INTENT(IN) :: hydrostatic
+    LOGICAL, INTENT(IN) :: conserve
+! D grid zonal wind (m/s)
+    REAL, INTENT(INOUT) :: u(isd:ied, jsd:jed+1, npz)
+    REAL, INTENT(INOUT) :: u_tl(isd:ied, jsd:jed+1, npz)
+! D grid meridional wind (m/s)
+    REAL, INTENT(INOUT) :: v(isd:ied+1, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: v_tl(isd:ied+1, jsd:jed, npz)
+! cell center vertical wind (m/s)
+    REAL, INTENT(INOUT) :: w(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: w_tl(isd:ied, jsd:jed, npz)
+! temp
+    REAL, INTENT(INOUT) :: pt(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: pt_tl(isd:ied, jsd:jed, npz)
+! 
+    REAL, INTENT(INOUT) :: ua(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: ua_tl(isd:ied, jsd:jed, npz)
+! 
+    REAL, INTENT(INOUT) :: va(isd:ied, jsd:jed, npz)
+    REAL, INTENT(INOUT) :: va_tl(isd:ied, jsd:jed, npz)
+! delta-height (m); non-hydrostatic only
+    REAL, INTENT(INOUT) :: delz(is:ie, js:je, npz)
+    REAL, INTENT(INOUT) :: delz_tl(is:ie, js:je, npz)
+! local:
+    REAL :: u2f(isd:ied, jsd:jed, kmax)
+    REAL :: u2f_tl(isd:ied, jsd:jed, kmax)
+    REAL, PARAMETER :: sday=86400.
+! scaling velocity  **2
+    REAL, PARAMETER :: u000=4900.
+    REAL :: c1, pc, fac
+    INTEGER :: i, j, k
+    INTRINSIC LOG10
+    INTRINSIC TANH
+    INTRINSIC SQRT
+    REAL :: arg1
+    REAL :: arg1_tl
+    REAL :: result1
+    REAL :: result1_tl
+    IF (.NOT.rf_initialized) THEN
+      ALLOCATE(rf_tl(npz))
+      ALLOCATE(rf(npz))
+      ALLOCATE(rw(npz))
+      IF (p_c .LE. 0.) THEN
+        pc = pm(1)
+      ELSE
+        pc = p_c
+      END IF
+!if( gid==0 ) write(6,*) 'Rayleigh friction E-folding time [days]:'
+      c1 = 1./(tau*sday)
+      kmax = 1
+      DO k=1,npz
+        IF (pm(k) .LT. 40.e2) THEN
+          arg1 = LOG10(pc/pm(k))
+          rf(k) = c1*(1.+TANH(arg1))
+          kmax = k
+          IF (gid .EQ. 0) WRITE(6, *) k, 0.01*pm(k), 1./(rf(k)*sday)
+        ELSE
+          GOTO 100
+        END IF
+      END DO
+ 100  IF (gid .EQ. 0) WRITE(6, *) 'Rayleigh Friction kmax=', kmax
+      rf_initialized = .true.
+    END IF
+!    allocate( u2f(isd:ied,jsd:jed,kmax) )
+    CALL C2L_ORD2_TLM(u, u_tl, v, v_tl, ua, ua_tl, va, va_tl, dx, dy, &
+&               rdxa, rdya, npz)
+    u2f = 0.
+    u2f_tl = 0.0_8
+    DO k=1,kmax
+      IF (hydrostatic) THEN
+        DO j=js,je
+          DO i=is,ie
+            u2f_tl(i, j, k) = 2*ua(i, j, k)*ua_tl(i, j, k) + 2*va(i, j, &
+&             k)*va_tl(i, j, k)
+            u2f(i, j, k) = ua(i, j, k)**2 + va(i, j, k)**2
+          END DO
+        END DO
+      ELSE
+        DO j=js,je
+          DO i=is,ie
+            u2f_tl(i, j, k) = 2*ua(i, j, k)*ua_tl(i, j, k) + 2*va(i, j, &
+&             k)*va_tl(i, j, k) + 2*w(i, j, k)*w_tl(i, j, k)
+            u2f(i, j, k) = ua(i, j, k)**2 + va(i, j, k)**2 + w(i, j, k)&
+&             **2
+          END DO
+        END DO
+      END IF
+    END DO
+!call timing_on('COMM_TOTAL')
+    call mpp_update_domains(u2f   , domain, whalo=1, ehalo=1, shalo=1, nhalo=1, complete=.true.)
+    call mpp_update_domains(u2f_tl, domain, whalo=1, ehalo=1, shalo=1, nhalo=1, complete=.true.)
+!call timing_off('COMM_TOTAL')
+    DO k=1,kmax
+      IF (conserve) THEN
+        IF (hydrostatic) THEN
+          DO j=js,je
+            DO i=is,ie
+              arg1_tl = u2f_tl(i, j, k)/u000
+              arg1 = u2f(i, j, k)/u000
+              IF (arg1 .EQ. 0.0_8) THEN
+                result1_tl = 0.0_8
+              ELSE
+                result1_tl = arg1_tl/(2.0*SQRT(arg1))
+              END IF
+              result1 = SQRT(arg1)
+              pt_tl(i, j, k) = pt_tl(i, j, k) + 0.5*u2f_tl(i, j, k)*(1.-&
+&               1./(1.+dt*rf(k)*result1)**2)/(cp-rg*ptop/pm(k)) + 0.5*&
+&               u2f(i, j, k)*2*dt*rf(k)*result1_tl/((cp-rg*ptop/pm(k))*(&
+&               1.+dt*rf(k)*result1)**3)
+              pt(i, j, k) = pt(i, j, k) + 0.5*u2f(i, j, k)/(cp-rg*ptop/&
+&               pm(k))*(1.-1./(1.+dt*rf(k)*result1)**2)
+            END DO
+          END DO
+        ELSE
+          DO j=js,je
+            DO i=is,ie
+              delz_tl(i, j, k) = (delz_tl(i, j, k)*pt(i, j, k)-delz(i, j&
+&               , k)*pt_tl(i, j, k))/pt(i, j, k)**2
+              delz(i, j, k) = delz(i, j, k)/pt(i, j, k)
+              arg1_tl = u2f_tl(i, j, k)/u000
+              arg1 = u2f(i, j, k)/u000
+              IF (arg1 .EQ. 0.0_8) THEN
+                result1_tl = 0.0_8
+              ELSE
+                result1_tl = arg1_tl/(2.0*SQRT(arg1))
+              END IF
+              result1 = SQRT(arg1)
+              pt_tl(i, j, k) = pt_tl(i, j, k) + 0.5*u2f_tl(i, j, k)*(1.-&
+&               1./(1.+dt*rf(k)*result1)**2)/(cp-rg*ptop/pm(k)) + 0.5*&
+&               u2f(i, j, k)*2*dt*rf(k)*result1_tl/((cp-rg*ptop/pm(k))*(&
+&               1.+dt*rf(k)*result1)**3)
+              pt(i, j, k) = pt(i, j, k) + 0.5*u2f(i, j, k)/(cp-rg*ptop/&
+&               pm(k))*(1.-1./(1.+dt*rf(k)*result1)**2)
+              delz_tl(i, j, k) = delz_tl(i, j, k)*pt(i, j, k) + delz(i, &
+&               j, k)*pt_tl(i, j, k)
+              delz(i, j, k) = delz(i, j, k)*pt(i, j, k)
+            END DO
+          END DO
+        END IF
+      END IF
+      DO j=js-1,je+1
+        DO i=is-1,ie+1
+          arg1_tl = u2f_tl(i, j, k)/u000
+          arg1 = u2f(i, j, k)/u000
+          IF (arg1 .EQ. 0.0_8) THEN
+            result1_tl = 0.0_8
+          ELSE
+            result1_tl = arg1_tl/(2.0*SQRT(arg1))
+          END IF
+          result1 = SQRT(arg1)
+          u2f_tl(i, j, k) = dt*rf(k)*result1_tl
+          u2f(i, j, k) = dt*rf(k)*result1
+        END DO
+      END DO
+      DO j=js,je+1
+        DO i=is,ie
+          u_tl(i, j, k) = (u_tl(i, j, k)*(1.+0.5*(u2f(i, j-1, k)+u2f(i, &
+&           j, k)))-u(i, j, k)*0.5*(u2f_tl(i, j-1, k)+u2f_tl(i, j, k)))/&
+&           (1.+0.5*(u2f(i, j-1, k)+u2f(i, j, k)))**2
+          u(i, j, k) = u(i, j, k)/(1.+0.5*(u2f(i, j-1, k)+u2f(i, j, k)))
+        END DO
+      END DO
+      DO j=js,je
+        DO i=is,ie+1
+          v_tl(i, j, k) = (v_tl(i, j, k)*(1.+0.5*(u2f(i-1, j, k)+u2f(i, &
+&           j, k)))-v(i, j, k)*0.5*(u2f_tl(i-1, j, k)+u2f_tl(i, j, k)))/&
+&           (1.+0.5*(u2f(i-1, j, k)+u2f(i, j, k)))**2
+          v(i, j, k) = v(i, j, k)/(1.+0.5*(u2f(i-1, j, k)+u2f(i, j, k)))
+        END DO
+      END DO
+      IF (.NOT.hydrostatic) THEN
+        DO j=js,je
+          DO i=is,ie
+            w_tl(i, j, k) = (w_tl(i, j, k)*(1.+u2f(i, j, k))-w(i, j, k)*&
+&             u2f_tl(i, j, k))/(1.+u2f(i, j, k))**2
+            w(i, j, k) = w(i, j, k)/(1.+u2f(i, j, k))
+          END DO
+        END DO
+      END IF
+    END DO
+  END SUBROUTINE RAYLEIGH_FRICTION_TLM
+  SUBROUTINE RAYLEIGH_FRICTION(dt, npx, npy, npz, ks, pm, tau, p_c, u, v&
+&   , w, pt, ua, va, delz, cp, rg, hydrostatic, conserve)
+    IMPLICIT NONE
+!     deallocate ( u2f )
+    REAL, INTENT(IN) :: dt
+! time scale (days)
+    REAL, INTENT(IN) :: tau
+    REAL, INTENT(IN) :: p_c
+    REAL, INTENT(IN) :: cp, rg
+    INTEGER, INTENT(IN) :: npx, npy, npz, ks
+    REAL, DIMENSION(npz), INTENT(IN) :: pm
+    LOGICAL, INTENT(IN) :: hydrostatic
+    LOGICAL, INTENT(IN) :: conserve
+! D grid zonal wind (m/s)
+    REAL, INTENT(INOUT) :: u(isd:ied, jsd:jed+1, npz)
+! D grid meridional wind (m/s)
+    REAL, INTENT(INOUT) :: v(isd:ied+1, jsd:jed, npz)
+! cell center vertical wind (m/s)
+    REAL, INTENT(INOUT) :: w(isd:ied, jsd:jed, npz)
+! temp
+    REAL, INTENT(INOUT) :: pt(isd:ied, jsd:jed, npz)
+! 
+    REAL, INTENT(INOUT) :: ua(isd:ied, jsd:jed, npz)
+! 
+    REAL, INTENT(INOUT) :: va(isd:ied, jsd:jed, npz)
+! delta-height (m); non-hydrostatic only
+    REAL, INTENT(INOUT) :: delz(is:ie, js:je, npz)
+! local:
+    REAL :: u2f(isd:ied, jsd:jed, kmax)
+    REAL, PARAMETER :: sday=86400.
+! scaling velocity  **2
+    REAL, PARAMETER :: u000=4900.
+    REAL :: c1, pc, fac
+    INTEGER :: i, j, k
+    INTRINSIC LOG10
+    INTRINSIC TANH
+    INTRINSIC SQRT
+    REAL :: arg1
+    REAL :: result1
+    IF (.NOT.rf_initialized) THEN
+      ALLOCATE(rf(npz))
+      ALLOCATE(rw(npz))
+      IF (p_c .LE. 0.) THEN
+        pc = pm(1)
+      ELSE
+        pc = p_c
+      END IF
+!if( gid==0 ) write(6,*) 'Rayleigh friction E-folding time [days]:'
+      c1 = 1./(tau*sday)
+      kmax = 1
+      DO k=1,npz
+        IF (pm(k) .LT. 40.e2) THEN
+          arg1 = LOG10(pc/pm(k))
+          rf(k) = c1*(1.+TANH(arg1))
+          kmax = k
+          IF (gid .EQ. 0) WRITE(6, *) k, 0.01*pm(k), 1./(rf(k)*sday)
+        ELSE
+          GOTO 100
+        END IF
+      END DO
+ 100  IF (gid .EQ. 0) WRITE(6, *) 'Rayleigh Friction kmax=', kmax
+      rf_initialized = .true.
+    END IF
+!    allocate( u2f(isd:ied,jsd:jed,kmax) )
+    CALL C2L_ORD2(u, v, ua, va, dx, dy, rdxa, rdya, npz)
+    u2f = 0.
+    DO k=1,kmax
+      IF (hydrostatic) THEN
+        DO j=js,je
+          DO i=is,ie
+            u2f(i, j, k) = ua(i, j, k)**2 + va(i, j, k)**2
+          END DO
+        END DO
+      ELSE
+        DO j=js,je
+          DO i=is,ie
+            u2f(i, j, k) = ua(i, j, k)**2 + va(i, j, k)**2 + w(i, j, k)&
+&             **2
+          END DO
+        END DO
+      END IF
+    END DO
+!call timing_on('COMM_TOTAL')
+!oncall mpp_update_domains(u2f, domain, whalo=1, ehalo=1, shalo=1, nhalo=1, complete=.true.)
+    call mpp_update_domains(u2f, domain, whalo=1, ehalo=1, shalo=1, nhalo=1, complete=.true.)
+!call timing_off('COMM_TOTAL')
+    DO k=1,kmax
+      IF (conserve) THEN
+        IF (hydrostatic) THEN
+          DO j=js,je
+            DO i=is,ie
+              arg1 = u2f(i, j, k)/u000
+              result1 = SQRT(arg1)
+              pt(i, j, k) = pt(i, j, k) + 0.5*u2f(i, j, k)/(cp-rg*ptop/&
+&               pm(k))*(1.-1./(1.+dt*rf(k)*result1)**2)
+            END DO
+          END DO
+        ELSE
+          DO j=js,je
+            DO i=is,ie
+              delz(i, j, k) = delz(i, j, k)/pt(i, j, k)
+              arg1 = u2f(i, j, k)/u000
+              result1 = SQRT(arg1)
+              pt(i, j, k) = pt(i, j, k) + 0.5*u2f(i, j, k)/(cp-rg*ptop/&
+&               pm(k))*(1.-1./(1.+dt*rf(k)*result1)**2)
+              delz(i, j, k) = delz(i, j, k)*pt(i, j, k)
+            END DO
+          END DO
+        END IF
+      END IF
+      DO j=js-1,je+1
+        DO i=is-1,ie+1
+          arg1 = u2f(i, j, k)/u000
+          result1 = SQRT(arg1)
+          u2f(i, j, k) = dt*rf(k)*result1
+        END DO
+      END DO
+      DO j=js,je+1
+        DO i=is,ie
+          u(i, j, k) = u(i, j, k)/(1.+0.5*(u2f(i, j-1, k)+u2f(i, j, k)))
+        END DO
+      END DO
+      DO j=js,je
+        DO i=is,ie+1
+          v(i, j, k) = v(i, j, k)/(1.+0.5*(u2f(i-1, j, k)+u2f(i, j, k)))
+        END DO
+      END DO
+      IF (.NOT.hydrostatic) THEN
+        DO j=js,je
+          DO i=is,ie
+            w(i, j, k) = w(i, j, k)/(1.+u2f(i, j, k))
+          END DO
+        END DO
+      END IF
+    END DO
+  END SUBROUTINE RAYLEIGH_FRICTION
+  SUBROUTINE PERTSTATE2FVSTATE_TLM(delp, delp_tl, pe, pe_tl, pk, pk_tl, &
+&   pkz, pkz_tl, peln, peln_tl, ptop, pt, pt_tl, isd, ied, jsd, jed, is&
+&   , ie, js, je, km, kappa)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: isd, ied, jsd, jed, is, ie, js, je, km
+    REAL, INTENT(IN) :: kappa
+    REAL, INTENT(IN) :: ptop
+    REAL, INTENT(IN) :: delp(isd:ied, jsd:jed, km)
+    REAL, INTENT(IN) :: delp_tl(isd:ied, jsd:jed, km)
+    REAL(p_precision), INTENT(INOUT) :: pe(is-1:ie+1, km+1, js-1:je+1)
+    REAL(p_precision), INTENT(INOUT) :: pe_tl(is-1:ie+1, km+1, js-1:je+1&
+&   )
+    REAL(p_precision), INTENT(INOUT) :: pk(is:ie, js:je, km+1)
+    REAL(p_precision), INTENT(INOUT) :: pk_tl(is:ie, js:je, km+1)
+    REAL(p_precision), INTENT(INOUT) :: pkz(is:ie, js:je, km)
+    REAL(p_precision), INTENT(INOUT) :: pkz_tl(is:ie, js:je, km)
+    REAL(p_precision), INTENT(INOUT) :: peln(is:ie, km+1, js:je)
+    REAL(p_precision), INTENT(INOUT) :: peln_tl(is:ie, km+1, js:je)
+    REAL, INTENT(INOUT) :: pt(isd:ied, jsd:jed, km)
+    REAL, INTENT(INOUT) :: pt_tl(isd:ied, jsd:jed, km)
+    INTEGER :: i, j, k, l
+    REAL :: pke_local(isd:ied, jsd:jed, km+1)
+    REAL :: pke_local_tl(isd:ied, jsd:jed, km+1)
+    REAL :: bx_local(isd:ied, jsd:jed, km)
+    REAL :: bx_local_tl(isd:ied, jsd:jed, km)
+    REAL :: cx_local(isd:ied, jsd:jed, km)
+    REAL :: cx_local_tl(isd:ied, jsd:jed, km)
+    INTRINSIC LOG
+    INTRINSIC EXP
+    pe_tl(:, 1, :) = 0.0_8
+    pe(:, 1, :) = ptop
+    DO l=2,km+1
+      DO j=js-1,je+1
+        DO i=is-1,ie+1
+          pe_tl(i, l, j) = pe_tl(i, l-1, j) + delp_tl(i, j, l-1)
+          pe(i, l, j) = pe(i, l-1, j) + delp(i, j, l-1)
+        END DO
+      END DO
+    END DO
+    pke_local = 0.
+    pke_local_tl = 0.0_8
+    DO l=1,km+1
+      DO j=js-1,je+1
+        DO i=is-1,ie+1
+          IF (pe(i, l, j) .NE. 0.) THEN
+            pke_local_tl(i, j, l) = pe_tl(i, l, j)/pe(i, l, j)
+            pke_local(i, j, l) = LOG(pe(i, l, j))
+          END IF
+        END DO
+      END DO
+    END DO
+    DO l=1,km+1
+      DO j=js,je
+        DO i=is,ie
+          peln_tl(i, l, j) = pke_local_tl(i, j, l)
+          peln(i, l, j) = pke_local(i, j, l)
+        END DO
+      END DO
+    END DO
+    pk_tl = 0.0_8
+    DO k=1,km+1
+      DO j=js,je
+        DO i=is,ie
+          pk_tl(i, j, k) = kappa*peln_tl(i, k, j)*EXP(kappa*peln(i, k, j&
+&           ))
+          pk(i, j, k) = EXP(kappa*peln(i, k, j))
+        END DO
+      END DO
+    END DO
+    bx_local_tl = 0.0_8
+    DO j=jsd,jed
+      DO i=isd,ied
+        bx_local_tl(i, j, :) = pke_local_tl(i, j, 2:km+1) - pke_local_tl&
+&         (i, j, 1:km)
+        bx_local(i, j, :) = pke_local(i, j, 2:km+1) - pke_local(i, j, 1:&
+&         km)
+      END DO
+    END DO
+    pke_local = 0.
+    pke_local_tl = 0.0_8
+    DO l=1,km+1
+      DO j=js-1,je+1
+        DO i=is-1,ie+1
+          IF (pe(i, l, j) .GT. 0.0_8 .OR. (pe(i, l, j) .LT. 0.0_8 .AND. &
+&             kappa .EQ. INT(kappa))) THEN
+            pke_local_tl(i, j, l) = kappa*pe(i, l, j)**(kappa-1)*pe_tl(i&
+&             , l, j)
+          ELSE IF (pe(i, l, j) .EQ. 0.0_8 .AND. kappa .EQ. 1.0) THEN
+            pke_local_tl(i, j, l) = pe_tl(i, l, j)
+          ELSE
+            pke_local_tl(i, j, l) = 0.0_8
+          END IF
+          pke_local(i, j, l) = pe(i, l, j)**kappa
+        END DO
+      END DO
+    END DO
+    cx_local_tl = 0.0_8
+    DO j=jsd,jed
+      DO i=isd,ied
+        cx_local_tl(i, j, :) = pke_local_tl(i, j, 2:km+1) - pke_local_tl&
+&         (i, j, 1:km)
+        cx_local(i, j, :) = pke_local(i, j, 2:km+1) - pke_local(i, j, 1:&
+&         km)
+      END DO
+    END DO
+    DO l=1,km
+      DO j=jsd,jed
+        DO i=isd,ied
+          IF (bx_local(i, j, l) .NE. 0.) THEN
+            bx_local_tl(i, j, l) = -(kappa*bx_local_tl(i, j, l)/(kappa*&
+&             bx_local(i, j, l))**2)
+            bx_local(i, j, l) = 1./(kappa*bx_local(i, j, l))
+          END IF
+        END DO
+      END DO
+    END DO
+    DO l=1,km
+      DO j=js,je
+        DO i=is,ie
+          pkz_tl(i, j, l) = bx_local_tl(i, j, l)*cx_local(i, j, l) + &
+&           bx_local(i, j, l)*cx_local_tl(i, j, l)
+          pkz(i, j, l) = bx_local(i, j, l)*cx_local(i, j, l)
+        END DO
+      END DO
+    END DO
+!Convert potential temperature to temperature
+    DO l=1,km
+      DO j=js,je
+        DO i=is,ie
+          pt_tl(i, j, l) = pt_tl(i, j, l)*pkz(i, j, l) + pt(i, j, l)*&
+&           pkz_tl(i, j, l)
+          pt(i, j, l) = pt(i, j, l)*pkz(i, j, l)
+        END DO
+      END DO
+    END DO
+  END SUBROUTINE PERTSTATE2FVSTATE_TLM
+  SUBROUTINE FVSTATE2PERTSTATE_TLM(pkz, pkz_tl, pt, pt_tl, isd, ied, jsd&
+&   , jed, is, ie, js, je, km)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: isd, ied, jsd, jed, is, ie, js, je, km
+    REAL(p_precision), INTENT(INOUT) :: pkz(is:ie, js:je, km)
+    REAL(p_precision), INTENT(INOUT) :: pkz_tl(is:ie, js:je, km)
+    REAL, INTENT(INOUT) :: pt(isd:ied, jsd:jed, km)
+    REAL, INTENT(INOUT) :: pt_tl(isd:ied, jsd:jed, km)
+    INTEGER :: i, j, k, l
+    DO l=1,km
+      DO j=js,je
+        DO i=is,ie
+          IF (pkz(i, j, l) .NE. 0.) THEN
+            pt_tl(i, j, l) = (pt_tl(i, j, l)*pkz(i, j, l)-pt(i, j, l)*&
+&             pkz_tl(i, j, l))/pkz(i, j, l)**2
+            pt(i, j, l) = pt(i, j, l)/pkz(i, j, l)
+          END IF
+        END DO
+      END DO
+    END DO
+  END SUBROUTINE FVSTATE2PERTSTATE_TLM
+
+end module fv_dynamics_tlm_mod

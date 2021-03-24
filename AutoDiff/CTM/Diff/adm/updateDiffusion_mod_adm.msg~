@@ -1,0 +1,11 @@
+1 updatediffusion: Command: concentration is not of a differentiable type in procedure updatediffusion
+2 do_vert_diffu: (AD12) User help requested: unknown dimension 2 of array *concentration%parray3d
+3 do_vert_diffu: (AD12) User help requested: unknown dimension 1 of array *concentration%parray3d
+4 do_vert_diffu: (AD12) User help requested: unknown dimension 2 of array *concentration%parray3d
+5 do_vert_diffu: (AD12) User help requested: unknown dimension 1 of array *concentration%parray3d
+6 spread: (DD25) Definition of spread in esmf overrides a definition in an enclosing scope.
+7 updatediffusion: Command: concentration is not of a differentiable type in procedure updatediffusion
+8 do_vert_diffu: (AD12) User help requested: unknown dimension 2 of array *concentration%parray3d
+9 do_vert_diffu: (AD12) User help requested: unknown dimension 1 of array *concentration%parray3d
+10 do_vert_diffu: (AD12) User help requested: unknown dimension 2 of array *concentration%parray3d
+11 do_vert_diffu: (AD12) User help requested: unknown dimension 1 of array *concentration%parray3d

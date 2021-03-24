@@ -1,0 +1,5 @@
+1 fxppmlinear: (TC33) External procedure dxa is not declared
+2 fxppmlinear: (TC37) Return type of function dxa set by implicit rule to REAL
+3 fxppmlinear: (DF03) variable ng is used before initialized
+4 fxppmlinear: (DF03) variable ng is used before initialized
+5 fxppmlinear: (DF03) variable grid_type is used before initialized

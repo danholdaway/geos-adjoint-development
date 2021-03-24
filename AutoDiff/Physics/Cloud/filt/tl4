@@ -1,0 +1,3 @@
+  td = filt_T * td + (1 - filt_T)*(tp_in)
+  ql_lsd  = filt_ql * ql_lsd  + (1 - filt_ql)*ql_lsp_in
+  ql_cond = filt_ql * ql_cond + (1 - filt_ql)*ql_conp_in

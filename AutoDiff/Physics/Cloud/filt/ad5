@@ -1,0 +1,3 @@
+ tb = tb + tp_in
+ ql_lsb = ql_lsb + ql_lsp_in
+ ql_conb = ql_conb + ql_conp_in

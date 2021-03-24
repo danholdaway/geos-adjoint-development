@@ -1,0 +1,9 @@
+
+  tp_in = (1 - filt_T) * tb
+  tb = filt_T * tb
+
+  ql_lsp_in = (1 - filt_ql) * ql_lsb
+  ql_lsb = filt_ql * ql_lsb
+  ql_conp_in = (1 - filt_ql) * ql_conb
+  ql_conb = filt_ql * ql_conb
+

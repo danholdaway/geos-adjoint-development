@@ -1,0 +1,91 @@
+
+!COMPUTE THE JACOBIAN OF LS_CLOUD AND USE RESULTS TO FILTER 'BAD' POINTS 
+DO ii = 1,1
+   xx = 0.0
+   xx(ii) = 1.0
+
+   !Store seperate trajectory so as not to overwrite
+   ttraj      = t(i,j,k)
+   qtraj      = q(i,j,k)
+   qi_lstraj  = qi_ls(i,j,k)
+   qi_contraj = qi_con(i,j,k)
+   ql_lstraj  = ql_ls(i,j,k)
+   ql_contraj = ql_con(i,j,k)
+   cf_lstraj  = cf_ls(i,j,k)
+   cf_contraj = cf_con(i,j,k)
+   phtraj     = ph(i,j,k)
+
+   tpert      = xx(1)
+   qpert      = xx(2)
+   qi_lspert  = xx(3)
+   qi_conpert = xx(4)
+   ql_lspert  = xx(5)
+   ql_conpert = xx(6)
+   cf_lspert  = xx(7)
+   cf_conpert = xx(8)
+
+   tpert_in      = tpert
+   qpert_in      = qpert
+   qi_lspert_in  = qi_lspert
+   qi_conpert_in = qi_conpert
+   ql_lspert_in  = ql_lspert
+   ql_conpert_in = ql_conpert
+   cf_lspert_in  = cf_lspert
+   cf_conpert_in = cf_conpert
+
+   CALL LS_CLOUD_D(dt, alpha, pdfflag, phtraj, ttraj, tpert, qtraj, qpert, &
+                  ql_lstraj, ql_lspert, ql_contraj, ql_conpert, &
+                  qi_lstraj, qi_lspert, qi_contraj, qi_conpert, &
+                  cf_lstraj, cf_lspert, cf_contraj, cf_conpert, &
+                  cons_alhl, cons_alhf, cons_alhs, cons_cp, cons_h2omw, cons_airmw, &
+                  t_ice_all, t_ice_max, icefrpwr, estblx)
+
+      Jacobian(1,ii) = (tpert-tpert_in)/DT
+      Jacobian(2,ii) = (qpert-qpert_in)/DT
+      Jacobian(3,ii) = (qi_lspert-qi_lspert_in)/DT
+      Jacobian(4,ii) = (qi_conpert-qi_conpert_in)/DT
+      Jacobian(5,ii) = (ql_lspert-ql_lspert_in)/DT
+      Jacobian(6,ii) = (ql_conpert-ql_conpert_in)/DT
+      Jacobian(7,ii) = (cf_lspert-cf_lspert_in)/DT
+      Jacobian(8,ii) = (cf_conpert-cf_conpert_in)/DT
+
+endDO
+
+     !Set the filtering coefficients 
+     filt_lsc = 0.1
+     filt_lscT = 0.01
+
+     !Filtering - 50% of points
+     if ( ( abs(Jacobian(3,1)) .gt. 5.2200e-10 ) .or. & !qi not required
+          ( abs(Jacobian(5,1)) .gt. 7.3000e-08 )      & !ql 50%
+                                                        !cf not required
+        ) then
+        filt_lsc = 0.1
+     endif
+
+     !Filtering - 40% of points
+     if ( ( abs(Jacobian(3,1)) .gt. 2.0000e-09 ) .or. & !qi 40%
+          ( abs(Jacobian(5,1)) .gt. 9.3100e-08 )      & !ql 40%
+                                                     !cf not required
+        ) then
+        filt_lsc = 0.01
+     endif
+
+     !Filtering - 10% of points (most filtered i.e. biggest problems expected)
+     if ( ( abs(Jacobian(3,1)) .gt. 1.4100e-08 ) .or. & !qi 10%
+          ( abs(Jacobian(5,1)) .gt. 2.1700e-07 ) .or. & !ql 10%
+          ( abs(Jacobian(7,1)) .gt. 0.0011     )      & !cf 10%
+        ) then
+        filt_lsc = 0.001
+     endif
+
+!Save the pre LS_CLOUD values
+t_p_prelsc = td(i,j,k)
+q_p_prelsc = qd(i,j,k)
+qi_ls_p_prelsc = qi_lsd(i,j,k)
+qi_con_p_prelsc = qi_cond(i,j,k)
+ql_ls_p_prelsc = ql_lsd(i,j,k)
+ql_con_p_prelsc = ql_cond(i,j,k)
+cf_ls_p_prelsc = cf_lsd(i,j,k)
+cf_con_p_prelsc = cf_cond(i,j,k)
+

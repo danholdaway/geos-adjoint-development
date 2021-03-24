@@ -1,0 +1,30 @@
+SUBROUTINE SOLVER_B(im, jm, lm, a, b, c, y, yb)
+  IMPLICIT NONE
+  INTEGER, INTENT(IN) :: im, jm, lm
+  REAL, DIMENSION(im, jm, lm), INTENT(IN) :: a, b, c
+  REAL, DIMENSION(im, jm, lm), INTENT(INOUT) :: yb
+  INTEGER :: i, j, l
+  REAL :: tempb(im, jm)
+!LU Decomposition
+!----------------
+  DO i=1,im
+    DO j=1,jm
+      b(i, j, 1) = 1./b(i, j, 1)
+      DO l=2,lm
+        a(i, j, l) = a(i, j, l)*b(i, j, l-1)
+        b(i, j, l) = 1./(b(i, j, l)-c(i, j, l-1)*a(i, j, l))
+      END DO
+    END DO
+  END DO
+  DO l=1,lm-1,1
+    tempb = b(:, :, l)*yb(:, :, l)
+    yb(:, :, l+1) = yb(:, :, l+1) - c(:, :, l)*tempb
+    yb(:, :, l) = tempb
+  END DO
+  yb(:, :, lm) = b(:, :, lm-1)*yb(:, :, lm)/(b(:, :, lm-1)-a(:, :, lm)*(&
+&   c(:, :, lm-1)*b(:, :, lm-1)+1.0))
+  DO l=lm,2,-1
+    yb(:, :, l-1) = yb(:, :, l-1) - a(:, :, l)*yb(:, :, l)
+  END DO
+END SUBROUTINE SOLVER_B
+

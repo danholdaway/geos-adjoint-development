@@ -1,0 +1,11 @@
+
+!Reset perturbation trajectory
+td(i,j,k)      = filt_lscT* td(i,j,k)      +  (1.0-filt_lscT)* t_p_prelsc
+qd(i,j,k)      = filt_lsc * qd(i,j,k)      +  (1.0-filt_lsc) * q_p_prelsc
+qi_lsd(i,j,k)  = filt_lsc * qi_lsd(i,j,k)  +  (1.0-filt_lsc) * qi_ls_p_prelsc
+qi_cond(i,j,k) = filt_lsc * qi_cond(i,j,k) +  (1.0-filt_lsc) * qi_con_p_prelsc
+ql_lsd(i,j,k)  = filt_lsc * ql_lsd(i,j,k)  +  (1.0-filt_lsc) * ql_ls_p_prelsc
+ql_cond(i,j,k) = filt_lsc * ql_cond(i,j,k) +  (1.0-filt_lsc) * ql_con_p_prelsc
+cf_lsd(i,j,k)  = filt_lsc * cf_lsd(i,j,k)  +  (1.0-filt_lsc) * cf_ls_p_prelsc
+cf_cond(i,j,k) = filt_lsc * cf_cond(i,j,k) +  (1.0-filt_lsc) * cf_con_p_prelsc
+

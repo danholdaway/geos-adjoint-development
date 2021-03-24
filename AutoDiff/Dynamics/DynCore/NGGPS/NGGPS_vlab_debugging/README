@@ -1,0 +1,663 @@
+For posterity this README attempts to describe the general process of 
+generating the TLM and adjoint of the FV3 dynamical core using Tapenade.
+
+Since the FV3 code is constantly changing this README is unlikely to 
+be complete, the user will have to be careful. A number of scripts are 
+provided to ease the process of developemnt and monitor the code 
+as it is developed into a working TLM and adjoint. Tapenade will produce
+log scripts that can be very useful for debugging too.
+
+For help and suggestions for improving this README email: 
+dan.holdaway@nasa.gov. Feel free to add to the README and log changes 
+in the history as FV3 evolves.
+
+A version of Tapneade can be downloaded from the Inria website and 
+insalled locally. The routines provied here assume Tapenade is installed 
+and those routines will need to be modified to point to the installation.
+
+
+
+History
+-------
+2017-09-25 | D.Holdaway   | Original version
+
+
+Note
+----
+
+This work has been done with the GMAO version of FV3. This version comes from NOAA's
+vlab repository but there are some after-the-fact modifications.
+
+
+PARTS
+-----
+The steps are divided up into general parts as follows:
+
+1. Create a copy of the code
+2. Prepare the code so that is can be compiled locally with only 
+   Fortran code and without the entire FMS library
+3. Test that it compiles
+4. Prepare the code so that Tapenade works
+5. Science changes to the code
+6. Running the Tapenade script
+7. Processing of Tapneade generated code
+8. Creation of tlm and adm modules
+9. Testing
+
+
+--------------
+--- PART 1 ---
+--------------
+
+It's imporant to keep track of the code as changes are made to it and then passed to Tapenade. This will 
+help with the process of absorbing future changes to the nonlinear model into the TLM and adjoint.
+
+1-a. Place/tag somewhere the directory that contains model/ tools/ etc. This is now fixed,
+     should not be changed and marks the starting point for generating the adjoint and
+     tlm. Later on it can be used to compare with changes that come from GFDL to see 
+     whether modifications are needed on the adjoint side.
+1-b. Copy /model/*0 to this directory, i.e. the one housing this README and run_tap.csh.
+     These files contain the bulk of the 'science', equations that evolve u,v,t,q,dp(,w,dz)
+
+--------------
+--- PART 2 ---
+--------------
+
+It is necessary to make sure the code is entirely Fortran and compiles locally. This ensures nothing is passed to Tapenade 
+that depends on something Tapenade can't see or doesn't understand. Is is not possible to simply pass the FMS library to 
+Tapenade and expect it to differntite the communication between processors. There are further dependencies that it wont be 
+able to access. Tapenade may not necessarily complain when it can't find something so this is a crucial step to make 
+sure the code produced by Tapenade is understood.
+
+2-a. Delete: fv_update_phys.F90
+             lin_cloud_microphys.F90
+             nwp_nudge.F90
+
+     as these wont be needed. Also comment out any uses/dependencies of these modules in the remaining files, 
+     use e.g. grep -i 'fv_update_phys_mod' *0 | grep -i 'use'
+
+2-b. fv_control.F90, fv_cmp.F90, fv_fill.F90, fv_sg.F90 and fv_grid_utils.F90 contain a lot of things that are not 
+     linearized and have a lot of uses that would create arduous unecessary work to create stubs of. These modules are
+     stripped down to only what uses there are in the files in this directory. See the examples in 
+     ProgressTracking/ExCompiles for how reduced these can be.
+
+2-c. The directories fms/, tools/ and MAPL/ contain the dependecy routines and constants. These are provided in a way that 
+     allows the core to be compiled offline, as of versions avaialble around 2017-09-28. However, it is likely that 
+     they will need to be modified in the future as the model changes.
+     Modules often contain subroutines that may have as inputs variables that are differentiated. All subroutines are 
+     stubbed to make compilation and Tapenade as quick as possible. If the subroutine will eventually be differentiated, 
+     e.g. all the mpp communication, then dummy calculations are inserted so the important input variable is updated, this 
+     tricks Tapenade into placing this subrouinte in its workflow. If a subroutine is not important in terms of 
+     differentiation, such as things that perform checks on variables, e.g. prt_mxn, or if it's some nonlinear thing 
+     that wont be differentiated, e.g. removing negative values from pos def variable, then the subroutine is
+     entirely stubbed. 
+
+2-d. fv_array.F90 needs to contain all the perturbation variables and allocation of these variables. Compare 
+     ProgressTracking/ModificationExamples/fv_arrays.F90 and ProgressTracking/ModificationExamples/fv_arrays_orig.F90
+     to see the difference and apply to most recent version of fv_arrays.F90. Similary for fv_control.F90, except 
+     at this point a stripped down version is being used so the changes dont need to be applied yet.
+
+
+--------------
+--- PART 3 ---
+--------------
+
+3-a. Run the compile_test.csh script to test that is compiles.
+
+3-b. Once the code compiles without error (warnings about unused varialbes etc are fine) create 
+     a copy of *0 files in ProgressTracking/Part3_Compiles
+
+Further changes are required before passing to Tapenade so this creates 'checkpoint' by copying code.
+
+--------------
+--- PART 4 ---
+--------------
+
+Now it is necessary to prepare the code for Tapneade. This can be divided into preprocessing and science changes.
+
+4-a. The first step is to preprocess the code to construct proper ifdef statements, which Tapenade cannot interpret. 
+     Open fpp_preprocess.csh and modify FFLAGS to those that the TLM and adjoint will be compiled with. Once
+     correct run the script. This places preprocessed files in ProgressTracking/Part4_PreProcessed/ and serves
+     as another code checkpoint.
+
+4-b. Copy files from ProgressTracking/Part4_PreProcessed/, this overwrites but they should be saved at the compilable
+     and preprocessed stages in ProgressTracking/
+
+
+4-c. Although the code compiles, Tapenade has stricter rules about the code than a modern ifortran compiler
+     so a series of changes are required before Tapenade will work. The following edits are needed:
+
+        Insert continuations where lines longer than 132 columns
+        In fv_dynamics.F90 comment out use mpif.h and calls to MPI_Wtime
+        Change use nh_core to use nh_utils on subs that are acually in this file
+        Limit to 3 arguments for max and min in tp_core:xtp and :ytp
+        fv_mapz: avoid passing same variable to routine twice
+        tp_core: in calcscalingfac ue actual dimensions for q1,dp2,ple1, replace tiny with 1.0e-30
+        boundary.F90: Initialize var_coarse_dummy
+        comment out write statements that involve differentiated variables
+        nh_core.F90: comment out public declaration of nh_util subs
+        dyn_core.F90: Get rid of module level variables like gz etc, put above in fv_dynamics and pass down, also rf
+         pass du and dv into split_p_grad, grad1_p_update
+        fv_dynamics.F90 make rf fv_dynamics level, not allocated, and not a common block
+        in boundary.F90 wbuffer = 0 etc to wbuffer = 0.0
+        in boundary.F90 nest_dat = 600 to nest_dat = 600.0
+        in fv_tracer_2d.F90 scaling = 1.d0 to scaling = 1.0
+        Remove the tag/version info if present in individual files since the charecters are too long for Tapenade:
+          sed -i '/version number/d' ./*0
+          sed -i '/character(len=128) :: version/d' ./*0
+          sed -i '/character(len=128) :: tagname/d' ./*0
+        Set dimensions of w and delz in fv_dynamics(), dyn_core(), c_sw(), d_sw(), mix_dp(), Lagrangian_to_Eulerian()
+        compute_total_energy()
+        Replace calls to init_ijk_mem with = 0.0 to avoid checkpointing
+        Comment out offline_tracer_advection scheme and calcScalingFactor, nonlinear and seems like some nonstandard 
+         programming that Tapenade wont like.
+
+real(kind=R_GRID), parameter :: cnst_0p20=0.20_R_GRID
+rff(k) = 1.0_R_GRID / (1.0_R_GRID+rff(k)) in Rayleigh_fast
+dpd = dry_mass - psdry init_hydro
+real :: E_Flux = 0.
+real, parameter::  big_number=1.e8
+real, parameter:: tiny_number=1.e-8
+real, parameter:: ptop_min=1.e-8
+
+
+dummy fv_dynamics?
+
+dp1 allocatable and other variable in fv_dynamics_mod
+
+switch e.g. i = npx to just using npx in subsequent equations
+
+Wish list for SJ
+-
+
+Subrouintes which require attention
+-range_check
+-print_mxm
+-print_maxmin
+-fillz
+-fv_sat_adj
+-fill2d
+-neg_adj3
+
+
+dimension handling
+
+- input q in Lagrangian_to_Eulerian, provide actual nq dimension
+
+
+--------------
+--- PART 5 ---
+--------------
+
+
+5-a. Advection: Create copies of all subroutines within tp_core.F90 and append the subroutines with _fb,
+     e.g. there is a copy of fv_tp_2d called fv_tp_2d_fb, also replace all calls within these subrouines
+     to the _fb versions. Now head to where the different options of hord/jord are actually used, probably
+     in xppm_fb. In these _fb versions remove all the nonlinear options, probably everything except option 2.
+     Delete any copied subroutines that are not needed, e.g. pert_ppm_fb.
+     
+     In sw_core.F90 create copies of xtp_u and ytp_v called xtp_u_fb ytp_v_fb and similarly remove the
+     nonlinear options. Also add in the ord=333 options from ProgressTracking/LinearSchemes/sw_core.F90
+
+     In sw_core.F90 replace the calls to fv_tp_2d following this example:
+
+        call fv_tp_2d_fb(delp, crx_adv, cry_adv, npx, npy, hord_dp, fx, fy,  &
+                         xfx_adv,yfx_adv, gridstruct, bd, ra_x, ra_y, nord=nord_v, damp_c=damp_v)
+
+     becomes:
+     
+        if (hord_dp == hord_dp_pert .and. .not. split_damp) then
+           call fv_tp_2d_fb(delp, crx_adv, cry_adv, npx, npy, hord_dp, fx, fy,  &
+                            xfx_adv,yfx_adv, gridstruct, bd, ra_x, ra_y, nord=nord_v, damp_c=damp_v)
+        else
+           call fv_tp_2d(delp, crx_adv, cry_adv, npx, npy, hord_dp_pert, fx, fy,  &
+                         xfx_adv,yfx_adv, gridstruct, bd, ra_x, ra_y, nord=nord_v_pert, damp_c=damp_v_pert)
+           !UNCOMcall fv_tp_2d(delp, crx_adv, cry_adv, npx, npy, hord_dp, fx, fy,  &
+           !UNCOM              xfx_adv,yfx_adv, gridstruct, bd, ra_x, ra_y, nord=nord_v, damp_c=damp_v)
+        endif
+
+     Also do something similar for the calls to xtp_u and ytp_v.
+
+     Add the new _pert inputs to d_sw and in dyn_core.F90.
+    
+     In dyn_core.F90 mimic what is done for hord_x for hord_x_pert. In the spoonge hord_m can still be 1 but for
+     other variables set to 2.
+
+     There is also a call to fv_tp_2d in nh_utils. Make the same updates there and pass in the hord_x_pert variable.
+
+     A similar thing needs to be done for fv_tracer_2d.F90, which also calls fv_tp_2d. Here it is made a little 
+     more complex due to the tracer damping coefficients. The simplest approach is to nest the if statement on
+     the damping coefficient within the if statement on hord_tr == hord_tr_pert, e.g. 
+
+         if (hord == hord_pert .and. .not.split_damp_tr) then
+         if ( it==1 .and. trdm>1.e-4 ) then
+            call fv_tp_2d_fb(q(isd,jsd,k,iq), cx(is,jsd,k), cy(isd,js,k), &
+                          npx, npy, hord, fx, fy, xfx(is,jsd,k), yfx(isd,js,k), &
+                          gridstruct, bd, ra_x, ra_y, mfx=mfx(is,js,k), mfy=mfy(is,js,k),   &
+                          mass=dp1(isd,jsd,k), nord=nord_tr, damp_c=trdm)
+         else
+            call fv_tp_2d_fb(q(isd,jsd,k,iq), cx(is,jsd,k), cy(isd,js,k), &
+                          npx, npy, hord, fx, fy, xfx(is,jsd,k), yfx(isd,js,k), &
+                          gridstruct, bd, ra_x, ra_y, mfx=mfx(is,js,k), mfy=mfy(is,js,k))
+         endif
+         else
+         if ( it==1 .and. trdm_pert>1.e-4 ) then
+            call fv_tp_2d(q(isd,jsd,k,iq), cx(is,jsd,k), cy(isd,js,k), &
+                          npx, npy, hord_pert, fx, fy, xfx(is,jsd,k), yfx(isd,js,k), &
+                          gridstruct, bd, ra_x, ra_y, mfx=mfx(is,js,k), mfy=mfy(is,js,k),   &
+                          mass=dp1(isd,jsd,k), nord=nord_tr_pert, damp_c=trdm_pert)
+         else
+            call fv_tp_2d(q(isd,jsd,k,iq), cx(is,jsd,k), cy(isd,js,k), &
+                          npx, npy, hord_pert, fx, fy, xfx(is,jsd,k), yfx(isd,js,k), &
+                          gridstruct, bd, ra_x, ra_y, mfx=mfx(is,js,k), mfy=mfy(is,js,k))
+         endif
+         !UNCOMif ( it==1 .and. trdm>1.e-4 ) then
+         !UNCOM   call fv_tp_2d(q(isd,jsd,k,iq), cx(is,jsd,k), cy(isd,js,k), &
+         !UNCOM                 npx, npy, hord, fx, fy, xfx(is,jsd,k), yfx(isd,js,k), &
+         !UNCOM                 gridstruct, bd, ra_x, ra_y, mfx=mfx(is,js,k), mfy=mfy(is,js,k),   &
+         !UNCOM                 mass=dp1(isd,jsd,k), nord=nord_tr, damp_c=trdm)
+         !UNCOMelse
+         !UNCOM   call fv_tp_2d(q(isd,jsd,k,iq), cx(is,jsd,k), cy(isd,js,k), &
+         !UNCOM                 npx, npy, hord, fx, fy, xfx(is,jsd,k), yfx(isd,js,k), &
+         !UNCOM                 gridstruct, bd, ra_x, ra_y, mfx=mfx(is,js,k), mfy=mfy(is,js,k))
+         !UNCOMendif
+         endif
+
+     Again all arguments need to be passed in by fv_dynamics.F90 and offline_tracer_advection
+
+
+5-b. Remapping: Create copies all subrouintes called by Lagrangian_to_Eulerian that have kord_x as an 
+     input, map_scalar, map1_ppm, mapn_tracer map1_q1 and rename then with _fb as for advection. 
+     These are to be linear versions of the remapping, so within each _fb subroutine, for example, replace,
+
+         if ( kord > 7 ) then
+            call scalar_profile( qs, q4, dp1, km, i1, i2, iv, kord, q_min )
+         else
+            call ppm_profile( q4, dp1, km, i1, i2, iv, kord )
+         endif
+
+     with 
+
+         if ( kord == 111 ) then
+            call scalar_profile_fb( qs, q4, dp1, km, i1, i2, iv, kord, q_min )
+         else
+            ! call ppm_profile( q4, dp1, km, i1, i2, iv, kord )
+         endif
+
+     The linear schemes scalar_profile_fb and cs_profile_fb are avaialable in ProgressTracking/LinearSchemes/fv_mapz.F90
+
+     Now, back in Lagrangian_to_Eulerian replace all the calls to nonlinear schemes following this example:
+
+     Replace:
+
+         call map_scalar(km,  peln(is,1,j),  pt_tmp, gz,   &
+                         km,  pn2,           pt,              &
+                         is, ie, j, isd, ied, jsd, jed, 1, abs(kord_tm), t_min)
+     
+     with
+
+         if (kord_tm == kord_tm_pert) then
+            call map_scalar_fb(km,  peln(is,1,j),  pt_tmp, gz,   &
+                               km,  pn2,           pt,              &
+                               is, ie, j, isd, ied, jsd, jed, 1, abs(kord_tm), t_min)
+         else
+            call map_scalar(km,  peln(is,1,j),  pt_tmp, gz,   &
+                            km,  pn2,           pt,              &
+                            is, ie, j, isd, ied, jsd, jed, 1, abs(kord_tm_pert), t_min)
+            !UNCOMcall map_scalar(km,  peln(is,1,j),  pt_tmp, gz,   &
+            !UNCOM                km,  pn2,           pt,              &
+            !UNCOM                is, ie, j, isd, ied, jsd, jed, 1, abs(kord_tm), t_min)
+         endif
+
+     Add the kord_x_pert to the input arguments for Lagrangian_to_Eulerian and in the call in fv_dynamics.F90.
+
+     After the last call to Lagrangian_to_Eulerian the trajecotry is not needed so for the nonlinear 
+     and perturbtion remapping to the same fast kord_x_pert
+
+     This can be acheived with something along the lines of:
+
+         do iq=1,nq
+                                kord_tracer(iq) = flagstruct%kord_tr
+            if ( iq==cld_amt )  kord_tracer(iq) = 9      ! monotonic
+                                kord_tracer_pert(iq) = flagstruct%kord_tr_pert
+            if ( iq==cld_amt )  kord_tracer_pert(iq) = 111      ! linear
+         enddo
+
+         kord_mt = flagstruct%kord_mt
+         kord_wz = flagstruct%kord_wz
+         kord_tm = flagstruct%kord_tm
+         kord_mt_pert = flagstruct%kord_mt_pert
+         kord_wz_pert = flagstruct%kord_wz_pert
+         kord_tm_pert = flagstruct%kord_tm_pert
+         if (n_map==k_split) then
+            kord_mt = kord_mt_pert
+            kord_wz = kord_wz_pert
+            kord_tm = kord_tm_pert
+            kord_tracer = kord_tracer_pert
+         endif
+
+     and then replacing in the call to Lagrangian_to_Eulerian
+
+5-c. Damping
+
+     In sw_core.F90:d_sw are various damping terms in addition to those used in the advection.
+
+     There are three places in which require modification.
+
+     - Put all the divergence damping into a subrouine called compute_divergence_damping() from: 
+
+          !-----------------------------
+          ! Compute divergence damping
+          !-----------------------------
+          !  damp = dddmp * da_min_c
+
+          if ( nord==0 ) then
+
+       to
+
+          endif
+
+       now call as:
+
+          if (.not.split_damp) then
+             call compute_divergence_damping_fb( nord,d2_bg,d4_bg,dddmp,dt, &
+                                                 vort,ptc,delpc,ke,u,v,uc,vc,ua,va,divg_d,wk, &
+                                                 gridstruct, flagstruct, bd)
+          else
+             call compute_divergence_damping( nord_pert,d2_bg_pert,d4_bg_pert,dddmp_pert,dt, &
+                                              vort,ptc,delpc,ke,u,v,uc,vc,ua,va,divg_d,wk, &
+                                              gridstruct, flagstruct, bd)
+             !UNCOMcall compute_divergence_damping( nord,d2_bg,d4_bg,dddmp,dt, &
+             !UNCOM                        vort,ptc,delpc,ke,u,v,uc,vc,ua,va,divg_d,wk, &
+             !UNCOM                        gridstruct, flagstruct, bd)
+          endif
+
+     - Replace:
+
+          if ( damp_w>1.E-5 ) then
+             dd8 = kgb*abs(dt)
+             damp4 = (damp_w*gridstruct%da_min_c)**(nord_w+1)
+             call del6_vt_flux(nord_w, npx, npy, damp4, w, wk, fx2, fy2, gridstruct, bd)
+             do j=js,je
+                do i=is,ie
+                   dw(i,j) = (fx2(i,j)-fx2(i+1,j)+fy2(i,j)-fy2(i,j+1))*rarea(i,j)
+                   heat_source(i,j) = dd8 - dw(i,j)*(w(i,j)+0.5*dw(i,j))
+                enddo
+             enddo
+          endif
+
+        with
+
+          if ( damp_w>1.E-5 ) then
+             dd8 = kgb*abs(dt)
+             damp4 = (damp_w*gridstruct%da_min_c)**(nord_w+1)
+             call del6_vt_flux(nord_w, npx, npy, damp4, w, wk, fx2, fy2, gridstruct, bd)
+             do j=js,je
+                do i=is,ie
+                   dw(i,j) = (fx2(i,j)-fx2(i+1,j)+fy2(i,j)-fy2(i,j+1))*rarea(i,j)
+                   heat_source(i,j) = dd8 - dw(i,j)*(w(i,j)+0.5*dw(i,j))
+                enddo
+             enddo
+          elseif ( damp_w_pert>1.E-5 ) then
+             dd8 = kgb*abs(dt)
+             damp4 = (damp_w_pert*gridstruct%da_min_c)**(nord_w_pert+1)
+             call del6_vt_flux(nord_w_pert, npx, npy, damp4, w, wk, fx2, fy2, gridstruct, bd)
+             do j=js,je
+                do i=is,ie
+                   dw(i,j) = (fx2(i,j)-fx2(i+1,j)+fy2(i,j)-fy2(i,j+1))*rarea(i,j)
+                   heat_source(i,j) = dd8 - dw(i,j)*(w(i,j)+0.5*dw(i,j))
+                enddo
+             enddo
+          endif
+
+        and 
+
+          if ( damp_w>1.E-5 .and. .not.split_damp ) then
+            do j=js,je
+               do i=is,ie
+                  w(i,j) = w(i,j) + dw(i,j)
+               enddo
+            enddo
+          endif
+
+        with
+
+          if ( damp_w>1.E-5 .and. .not.split_damp ) then
+            do j=js,je
+               do i=is,ie
+                  w(i,j) = w(i,j) + dw(i,j)
+               enddo
+            enddo
+          elseif ( damp_w_pert>1.E-5 ) then
+            do j=js,je
+               do i=is,ie
+                  w(i,j) = w(i,j) + dw(i,j)
+               enddo
+            enddo
+          endif
+
+     - There is a similar set of calls around damp_v that are replaced.
+
+
+5-d. (Optional and model dependent) Compute the pressure variables and convert 
+     temperature variable. In the nonlinear model this would usually be done 
+     outside the core but it helps avoid recomputation in the adjoint model to 
+     do it within the core. In fv_dynamics.F90:fv_dynamics at the beginning insert:
+
+        !Compute the FV variables internally, for checkpointing purposes
+        if ( hydrostatic .and. .not.(IdealTest) ) then
+           call geos_to_fv3(bd, npz, kappa, ptop, delp, pe, pk, pkz, peln, pt)
+        endif
+
+     and at the end insert:
+
+        !Convert back to potential temperature
+        if ( hydrostatic .and. .not.(IdealTest)) then
+           call fv3_to_geos(bd, npz, pkz, pt)
+        endif
+
+     Insert as a module level saved varialbe:
+
+     logical, save :: IdealTest = .false.
+
+     This can be made true if cold starting the TLM with an idealized test case.
+
+--------------
+--- PART 6 ---
+--------------
+
+7-a. Tapenade has two modes adm or fwd/bwd. In the former the forward sweep of a subroutine
+     involves running the regular nonlinear model and the backward sweep involes running the 
+     nonlinear code again while saving variables in memory and then performing the adjoint
+     sweep. In the latter variables are saved in memory during the first forward sweep preventing
+     the need for the second forward sweep. The former is slower but requires less memory, the
+     latter is faster but requires potentially a lot more memory. Tapenade takes the former 
+     approach for all subroutines by default but we want it to take the latter approach for the
+     most part. Begin my generating a list of all the subroutines with the following commands:
+
+       rm -f allsubs.txt
+       grep -i 'subroutine' *0 | grep -i 'end' > allsubs1.txt
+       sed -r -i 's/\s+//g' allsubs1.txt
+       sed -i -- 's/.F90:endsubroutine/_mod./g' allsubs1.txt
+       sed -i -e 's/^/ /' allsubs1.txt
+       cat allsubs1.txt | xargs > allsubs.txt 
+       rm -f allsubs1.txt
+
+       rm -f allfuncs.txt
+       grep -i 'function' *0 | grep -i 'end' > allfuncs1.txt
+       sed -r -i 's/\s+//g' allfuncs1.txt
+       sed -i -- 's/.F90:endfunction/_mod./g' allfuncs1.txt
+       sed -i -e 's/^/ /' allfuncs1.txt
+       cat allfuncs1.txt | xargs > allfuncs.txt 
+       rm -f allfuncs1.txt
+
+       cat allsubs.txt allfuncs.txt | xargs > allFB.txt
+       rm -f allsubs.txt allfuncs.txt
+
+     In allFB.txt delete all subroutines for which there is a _fb version, e.g. delete
+
+       sw_core_mod.xtp_u
+
+     also get rid of schemes called only by the non-fb versiosn, e.g. pert_ppm
+
+
+--------------
+--- PART 7 ---
+--------------
+
+7-a. Note that now the calls to the nonlinear model around remapping and advection
+     are duplicated when split is true. The nonlinear trajectory is updated both 
+     by the TLM scheme and then again by the nonlinear scheme. Since the TLM scheme
+     is getting the hord/kord/damp that is suitable for the perturbations the 
+     update of the reference state by the TLM needs to be modified. This could be
+     acheived by creating a copy of the reference state to pass in but that would
+     be inefficient. Instead create copies of all the relevant tlm schemes with the
+     _TGV (Tangent à Grande Vitesse) suffix instead. Initially the _TGV subroutine 
+     is a copy of the regular TLM scheme but with the key varialbe not updated. 
+     Later on the option exists to remove superfluous caclculations from the TGV 
+     scheme but it is useful to first get the code working so zero diff tests can
+     by used to double check code removal. 
+
+     Below is an example of the update required at the call stage:
+
+        IF (abs_kord_tm .EQ. abs_kord_tm_pert) THEN
+          gz_tl = 0.0
+          CALL MAP1_PPM_TLM(km, pe1, pe1_tl, gz, gz_tl, km, pe2, &
+                            pe2_tl, delz, delz_tl, is, ie, j, isd, ied, &
+                            jsd, jed, 1, abs_kord_tm)
+        ELSE
+          gz_tl = 0.0
+          CALL MAP1_PPM_TGV(km, pe1, pe1_tl, gz, gz_tl, km, pe2, &
+                            pe2_tl, delz, delz_tl, is, ie, j, isd, ied, jsd&
+                          , jed, 1, abs_kord_tm_pert)
+          call map1_ppm (km,   pe1,        gz,   &
+                         km,   pe2, delz,              &
+                         is, ie, j, isd,  ied,  jsd,  jed,  1, abs_kord_tm)
+        END IF
+
+     The actual subroutines should be able to compile with, for example,
+
+       REAL, INTENT(IN) :: q1(isd:ied, jsd:jed, km, nq)
+
+     instead of 
+
+       REAL, INTENT(INOUT) :: q1(isd:ied, jsd:jed, km, nq)
+
+     Tapenade also generated the nonlinear scheme. Though these are never called
+     it is useful to have them working to test the efficiency against the original
+     code. Again there are double calls to the remapping and advection etc and these
+     should be deleted, essentially anything involving _pert should be used in the
+     nonlinear stream.
+
+7-b. Note that in TRACER_2D_TLM & TRACER_2D_NESTED_TLM the !UNCOM does not work 
+     quite correctly and some slight rearrangement is necessary. It should look
+     something like e.g.:
+
+         IF (hord .EQ. hord_pert .AND. (.NOT.split_damp_tr)) THEN
+           IF (it .EQ. 1 .AND. trdm .GT. 1.e-4) THEN
+             CALL FV_TP_2D_TLM(
+           ELSE
+             CALL FV_TP_2D_TLM(
+           END IF
+         ELSE
+           IF (it .EQ. 1 .AND. trdm_pert .GT. 1.e-4) THEN
+             CALL FV_TP_2D_TGV(
+           ELSE
+             CALL FV_TP_2D_TGV(
+           END IF
+           if ( it==1 .and. trdm>1.e-4 ) then
+              call fv_tp_2d(
+           else
+              call fv_tp_2d(
+           endif
+         END IF
+
+
+
+
+
+7-b. Update the calls in fv_mapz:Lagrangian_to_Eulerian
+
+
+
+Preparing the modules to hold adjoint and TLM code
+--------------------------------------------------
+
+WARNINGS: With the TLM and adjoint code it is necessary to keep a second copy of the nonlinear 
+          code and this should be the exact same version that the linearized code was
+          generated from. For example, if the FV3 developers were to move or remove something
+          from one of the derived types in fv_arrays.F90 it would likely cause the linearized 
+          code to break. 
+
+          There are essentially two options for doing this, create a copy of the entire fvdycore/
+          directory and include new model_adm/ and model_tlm/ directories or create model_adm/ and
+          model_tlm/ alongside the regular and consantly updating model/ and tools/ directories and
+          make copies of e.g. fv_arrays.F90 and everything else the linearized model depends on
+          in the model_adm and model_tlm directories.
+
+          Although it results in more compilation, it is recommended to take the former approach. 
+          This has some advantages, namely that it means less entanglement of essentially different
+          versions of the code and allows for easier version tracking. I.e. fvdycorepert/model can be
+          compared with fvdycore/model to see how changes are evolving. It also means less chance
+          of inadvertantly pointing to the evolving nonlinear code. The disadvantage of this approach
+          is that modules the linearized model does not depend on will be superflously compiled twice.
+
+          FMS is the library that supports GFDL models such as FV3. This is a huge library and only
+          a few parts need to be linearized. As such the approach at GMAO has *not* been to keep
+          an entirely seperate version that only differs in the presense of the adjoint. This was the
+          approach in the past but it caused difficulty when it came time to update the linearized
+          model as the versions of FMS had diverged so much. It is hoped that GFDL will consider
+          the impact on the linearized model when future changes are made. In general if FMS is changed
+          in such a way that changes are also made to FV3 these changes will need to simultaneaously 
+          be inherited by the linearzed model. In the linearized model an extra level exists  between 
+          FV3 and FMS due to the dummy routines used to trick Tapenade. This may provide some flexibility
+          to avoid changing internal code if FMS is changed.
+
+The following steps can be used to setup the linearized FV3 modules
+
+1. Copy fvdycore/ to fvdycorepert/
+
+2. Inside fvdycorepert/ create model_adm/ and model_tlm/
+
+3. Make copies of the following files:
+
+   cp model/a2b_edge.F90 model_tlm/a2b_edge_tlm.F90
+   cp model/boundary.F90 model_tlm/boundary_tlm.F90
+   cp model/dyn_core.F90 model_tlm/dyn_core_tlm.F90
+   cp model/fv_dynamics.F90 model_tlm/fv_dynamics_tlm.F90
+   cp model/fv_grid_utils.F90 model_tlm/fv_grid_utils_tlm.F90
+   cp model/fv_mapz.F90 model_tlm/fv_mapz_tlm.F90
+   cp tools/fv_mp.F90 model_tlm/fv_mp_tlm.F90
+   cp model/fv_nesting.F90 model_tlm/fv_nesting_tlm.F90
+   cp model/fv_tracer2d.F90 model_tlm/fv_tracer2d_tlm.F90
+   cp model/nh_core.F90 model_tlm/nh_core_tlm.F90
+   cp model/nh_utils.F90 model_tlm/nh_utils_tlm.F90
+   cp model/sw_core.F90 model_tlm/sw_core_tlm.F90
+   cp model/tp_core.F90 model_tlm/tp_core_tlm.F90
+   
+   cp model/a2b_edge.F90 model_adm/a2b_edge_adm.F90
+   cp model/boundary.F90 model_adm/boundary_adm.F90
+   cp model/dyn_core.F90 model_adm/dyn_core_adm.F90
+   cp model/fv_dynamics.F90 model_adm/fv_dynamics_adm.F90
+   cp model/fv_grid_utils.F90 model_adm/fv_grid_utils_adm.F90
+   cp model/fv_mapz.F90 model_adm/fv_mapz_adm.F90
+   cp tools/fv_mp.F90 model_adm/fv_mp_adm.F90
+   cp model/fv_nesting.F90 model_adm/fv_nesting_adm.F90
+   cp model/fv_tracer2d.F90 model_adm/fv_tracer2d_adm.F90
+   cp model/nh_core.F90 model_adm/nh_core_adm.F90
+   cp model/nh_utils.F90 model_adm/nh_utils_adm.F90
+   cp model/sw_core.F90 model_adm/sw_core_adm.F90
+   cp model/tp_core.F90 model_adm/tp_core_adm.F90
+
+4. In each newly created file delete all lines between 'contains' and 'end module'. Rename module to include _adm or _tlm.
+   Replace all e.g. use fv_mp_mod to use fv_mp_adm_mod. This applies to all modules that were copied to the adm/tlm 
+   directories. In these use statements add the use of tlm and adm subrouintes that are needed. 
+
+   In theory the modules generated by Tapenade could be used exactly as is but renaming in this way helps
+   keep similarity between the nonlinear FV3 code and the tlm/adm versions. Also note that Tapenade will point
+   to things like mpp_domains_mod_d, which will never exist and so would have to be untangled anyway.
+
+5. Copy the Tapenade generated code into each module.
+
+6. Compile, fix problems, repeat!
+

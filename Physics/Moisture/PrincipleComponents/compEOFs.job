@@ -1,0 +1,10 @@
+#!/bin/csh -fx
+
+reset
+
+# Create files of horiz correlation input parameters from param setup files
+# No file is created for data type = MASS_
+
+ifort -vec-report0 -O3 -o compEOFs.x compEOFs.f90 -lmkl_core -lmkl_intel_lp64 -lmkl_sequential
+
+ compEOFs.x

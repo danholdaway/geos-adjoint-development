@@ -1,0 +1,9 @@
+1 radcouple: (TC19) Equality test on reals is not reliable
+2 radcouple: (TC19) Equality test on reals is not reliable
+3 radcouple: (TC19) Equality test on reals is not reliable
+4 radcouple: (TC19) Equality test on reals is not reliable
+5 cldovlp: (TC19) Equality test on reals is not reliable
+6 cldovlp: (TC19) Equality test on reals is not reliable
+7 cldovlp: (TC19) Equality test on reals is not reliable
+8 getnirtau1: (TC19) Equality test on reals is not reliable
+9 getnirtau1: (TC19) Equality test on reals is not reliable

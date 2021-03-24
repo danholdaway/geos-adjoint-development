@@ -1,0 +1,21 @@
+
+  !LS_CLOUD FILTERING
+  integer :: ii, kk1, kk2
+  real(8) :: xx(8) 
+  real(8) :: ttraj, qtraj, qi_lstraj, qi_contraj, ql_lstraj, ql_contraj, cf_lstraj, cf_contraj, phtraj 
+  real(8) :: tpert, qpert, qi_lspert, qi_conpert, ql_lspert, ql_conpert, cf_lspert, cf_conpert
+  real(8) :: tpert_in, qpert_in, qi_lspert_in, qi_conpert_in, ql_lspert_in, ql_conpert_in
+  real(8) :: cf_lspert_in, cf_conpert_in
+  real(8) :: Jacobian(8,8)
+  real(8) :: filt_lsc, filt_lscT, filt_T, filt_ql
+  real(8), parameter :: cfls_T_filt = 0.25e-3
+  real(8), parameter :: cfls_q_filt = 1.0
+  real(8) :: t_p_prelsc, q_p_prelsc
+  real(8) :: qi_ls_p_prelsc, qi_con_p_prelsc, ql_ls_p_prelsc, ql_con_p_prelsc
+  real(8) :: cf_ls_p_prelsc, cf_con_p_prelsc
+  real(8), dimension(im, jm, lm) :: tp_in, ql_lsp_in, ql_conp_in
+
+  filt_T = 0.5
+  filt_ql = 0.5
+  Jacobian = 0.0
+

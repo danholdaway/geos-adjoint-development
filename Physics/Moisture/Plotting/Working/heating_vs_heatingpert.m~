@@ -1,0 +1,20 @@
+close all
+clc
+clear
+
+
+cd /discover/nobackup/drholdaw/ExperimentData/Journal_Articles/moist_dev_mwr/
+
+% A = ncread('jacobian_vs_heating_container.nc4','A');
+% B = ncread('jacobian_vs_heating_container.nc4','B');
+
+A  =   ncread('jVr_6h_colkcbl_filteron.nc4','A');
+B  =   ncread('jVr_6h_colkcbl_filteron.nc4','B');
+ivec = ncread('jVr_6h_colkcbl_filteron.nc4','ivec');
+
+J = ncread('JACOBIAN_DEEP_SERIES.nc4','J');
+kcbl = ncread('JACOBIAN_DEEP_SERIES.nc4','KCBL');
+top = ncread('JACOBIAN_DEEP_SERIES.nc4','TOP');
+depth = ncread('JACOBIAN_DEEP_SERIES.nc4','DEPTH');
+
+cd /home/drholdaw/Lin_Moist_Physics/Moist_Dev_MWR/

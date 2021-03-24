@@ -1,0 +1,53 @@
+!DO LARGE SCALE CLOUD
+DO jlsc = jcol_min,jcol_max
+   DO ilsc = icol_min,icol_max
+
+      U_lsc(:) = U(ilsc,jlsc,:)
+      V_lsc(:) = V(ilsc,jlsc,:)
+      TH_lsc(:) = TH(ilsc,jlsc,:)
+      Q_lsc(:) = Q(ilsc,jlsc,:)
+
+      T_lsc(:) = TEMP(ilsc,jlsc,:)
+      
+      Ps_lsc = Ps(ilsc,jlsc)
+      P_lsc(:) = ak(:)*.01 + bk(:)*Ps_lsc
+      Ph_lsc(1:kmax) = 0.5*( P_lsc(1:kmax) +  P_lsc(2:kmax+1) ) 
+
+      Pi_lsc(:) = (P_lsc(:)/1000.0)**Rkap
+      Pih_lsc(:) = (Ph_lsc(:)/1000.0)**Rkap
+        
+      call large_cloud(kmax,U_lsc,V_lsc,TH_lsc,Q_lsc,T_lsc)
+
+      T_lsc = TH_lsc*Pih_lsc
+
+      U_lscout(ilsc,jlsc,:) = U_lsc(:)
+      V_lscout(ilsc,jlsc,:) = V_lsc(:)
+      TH_lscout(ilsc,jlsc,:) = TH_lsc(:)
+      Q_lscout(ilsc,jlsc,:) = Q_lsc(:)
+
+
+   endDO
+endDO
+TEMP(:,:,:) = TH_lscout(:,:,:)*Pih(:,:,:)
+
+U_out = U_lscout
+V_out = V_lscout
+TH_out = TH_lscout
+Q_out = Q_lscout
+
+subroutine large_cloud(kmax,U,V,TH,Q,T)
+
+IMPLICIT NONE
+
+INTEGER :: kmax
+
+REAL, DIMENSION(kmax) :: U, V, TH, Q, T
+
+
+!COMPUTE QSS AND DQS - Depend on perturbed quantities.
+!      call MRQSAT(T_lsc(:), Ph_lsc(:), qs_lsc(:), DqsdT_lsc(:),1,1,kmax)
+
+
+end subroutine large_cloud
+
+
